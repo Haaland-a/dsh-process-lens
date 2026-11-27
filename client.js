@@ -35,6 +35,7 @@ window.__ModuleLoader__.load({
         mode: 'onDemand',
         autoOpen: false,
         recent: 8,
+        allSteps: false,
         autoSummarize: false,
         autoSummarizeCount: 3,
         style: 'plain',
@@ -500,7 +501,13 @@ window.__ModuleLoader__.load({
                 'div',
                 { className: 'pl-pre-head' },
                 `发给模型的提示词 · 共 ${preview.chars} 字 · 风格：${preview.styleName}` +
-                  (preview.compact ? ` · 省 token 已开（最近 ${preview.compactCount} 条）` : ''),
+                  (preview.compact ? ` · 省 token 已开（最近 ${preview.compactCount} 条）` : '') +
+                  (preview.compact && preview.fullChars > preview.chars
+                    ? ` · 不省是 ${preview.fullChars} 字，实际省了 ${Math.round((1 - preview.chars / preview.fullChars) * 100)}%`
+                    : '') +
+                  (preview.compact && preview.compactUsed === false
+                    ? ' · 这步内容本来就短，压缩反而更长，这次按原文发的'
+                    : ''),
               ),
               h('div', { className: 'pl-pre-label' }, '一、系统提示（角色 + 三行格式）'),
               h('pre', { className: 'pl-pre' }, preview.system),
@@ -833,6 +840,9 @@ window.__ModuleLoader__.load({
           h('span', { className: 'pl-raw-caret' }, open ? '▾' : '▸'),
           h('span', null, open ? '收起原文' : '展开原文'),
           size > 0 ? h('span', { className: 'pl-raw-count' }, `${size} 字`) : null,
+          card.chars > 0
+            ? h('span', { className: 'pl-raw-count', title: '这一步讲给模型时实际发了多少字' }, `提示词 ${card.chars} 字`)
+            : null,
         ),
         open ? h('div', { className: 'pl-raw-body' }, ...body) : null,
       )
@@ -959,7 +969,7 @@ window.__ModuleLoader__.load({
     function Drawer() {
       const lens = useLens()
       const [retrying, setRetrying] = useState(false)
-      const [showAllSteps, setShowAllSteps] = useState(false)
+      const showAllSteps = lens.config.allSteps === true
       const bodyRef = useRef(null)
       const paneRef = useRef(null)
       const pinnedRef = useRef(true)
@@ -1192,6 +1202,32 @@ window.__ModuleLoader__.load({
                 ? `已开「打开时自动讲最近 ${Math.min(20, Math.max(1, Math.round(Number(lens.config.autoSummarizeCount) || 3)))} 步」：每次打开面板都会自动生成这些概要（花额度）`
                 : '默认只显示原文。点一次才花一次额度，讲过的会标「讲完了」',
             ),
+            steps.length > 1
+              ? h(
+                  'div',
+                  { className: 'pl-modeseg', role: 'group', 'aria-label': '过程页显示多少步' },
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: `pl-modebtn${showAllSteps ? '' : ' is-on'}`,
+                      onClick: () => void saveConfig({ allSteps: false }),
+                      title: `只摆最近 ${recent} 步（设置 -> 打开时显示 里能改 N）`,
+                    },
+                    `最近 ${Math.min(recent || steps.length, steps.length)} 步`,
+                  ),
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: `pl-modebtn${showAllSteps ? ' is-on' : ''}`,
+                      onClick: () => void saveConfig({ allSteps: true }),
+                      title: '这一轮的每一步都摆出来',
+                    },
+                    `全部 ${steps.length} 步`,
+                  ),
+                )
+              : null,
             steps.length
               ? h(
                   'button',
@@ -1225,7 +1261,7 @@ window.__ModuleLoader__.load({
                   {
                     type: 'button',
                     className: 'pl-more-steps',
-                    onClick: () => setShowAllSteps(true),
+                    onClick: () => void saveConfig({ allSteps: true }),
                     title: `默认只摆最近 ${recent} 步，想全看可以展开`,
                   },
                   `上面还有 ${hiddenCount} 步没摆出来 · 展开这一轮全部 ${steps.length} 步`,
@@ -1244,7 +1280,7 @@ window.__ModuleLoader__.load({
                   {
                     type: 'button',
                     className: 'pl-more-steps is-collapse',
-                    onClick: () => setShowAllSteps(false),
+                    onClick: () => void saveConfig({ allSteps: false }),
                   },
                   `收起，只显示最近 ${recent} 步`,
                 )
@@ -1380,6 +1416,10 @@ window.__ModuleLoader__.load({
 .pl-more-steps { align-self: stretch; font: inherit; font-size: 11.5px; padding: 6px 10px; border-radius: 9px; border: 1px dashed rgba(127,127,127,.34); background: transparent; color: inherit; opacity: .75; cursor: pointer; }
 .pl-more-steps:hover { background: rgba(127,127,127,.1); opacity: 1; }
 .pl-more-steps.is-collapse { border-style: solid; }
+.pl-modeseg { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border-radius: 9px; border: 1px solid rgba(127,127,127,.28); background: rgba(127,127,127,.06); }
+.pl-modebtn { font: inherit; font-size: 11.5px; padding: 3px 9px; border: 0; border-radius: 7px; background: transparent; color: inherit; opacity: .7; cursor: pointer; }
+.pl-modebtn:hover { background: rgba(127,127,127,.14); opacity: 1; }
+.pl-modebtn.is-on { background: var(--dsw-alias-bg-layer-2, rgba(127,127,127,.22)); opacity: 1; font-weight: 600; }
 .pl-empty, .pl-running, .pl-done { font-size: 12px; opacity: .55; padding: 6px 2px; }
 .pl-running::after { content: '…'; animation: pl-blink 1.2s steps(4) infinite; }
 @keyframes pl-blink { 0%,100% { opacity: .2 } 50% { opacity: 1 } }

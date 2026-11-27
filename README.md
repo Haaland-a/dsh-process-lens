@@ -1,9 +1,9 @@
 # 过程讲解器（dsh-process-lens）
 
 [![DSH plugin](https://img.shields.io/badge/DSH-plugin-4f7cff)](https://github.com/Haaland-a/dsh-process-lens)
-[![version](https://img.shields.io/badge/version-0.2.3-2ea043)](./package.json)
+[![version](https://img.shields.io/badge/version-0.2.4-2ea043)](./package.json)
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
-[![self test](https://img.shields.io/badge/self--test-51%2F51-2ea043)](./harness.mjs)
+[![self test](https://img.shields.io/badge/self--test-58%2F58-2ea043)](./harness.mjs)
 
 把 AI 干活的每一步摊开给你看：**原文点一下就看全文**（不花额度），**人话解说按需生成**（点哪步才讲哪步），**用哪个模型讲由你单独挑**。
 
@@ -85,6 +85,17 @@
 
 一句话：平时关着够用；哪一步实在看不懂，再打开让它多想一会儿。
 
+### 4.7 过程页：最近 N 步 / 全部（老会话也能看全）
+
+过程页顶上有个小开关：**「最近 N 步」 / 「全部 M 步」**。
+
+- 刚进来默认「最近 N 步」（N 在设置里改，默认 8），屏幕不炸；
+- 点「全部 M 步」就把这一轮每一步都摆出来，**选完会记住**，下次打开还是你选的那个；
+- 中间还有一条「上面还有 X 步没摆出来 · 展开这一轮全部 Y 步」，点一下同样切到全部。
+
+以前已经结束的老会话（甚至 DSH 重启过的那种）只显示最后几步，是因为补账只回放最近 4000 条事件——
+现在点开某一轮时，插件会**从这一轮的 turn/start 重新回放**，把整轮补齐（每一轮只补一次，不重复花钱也不重复算）。
+
 ### 5. 讲解风格 / 自己的提示词 / 省 token
 
 这三样都在面板设置区的「讲解口味」里：
@@ -109,6 +120,12 @@
 
 - 打开后只把**最近 N 步压成要点**再发给模型（N 默认 5，可 1–50，旁边有 5 / 10 快捷按钮）；
 - 提示里会明写「省 token 模式：信息已压缩」，模型知道自己在看摘要，不会瞎编细节；
+- **只有真的更短才用压缩版**：内容本来就短的步骤，压缩版为了带上「最近 N 步概要」反而更长，
+  所以插件把两种都算一遍，谁短发谁——开了省 token 绝不会更费；
+- **省了多少你能直接看见**：
+  - 预览里写「共 X 字 · 不省是 Y 字，实际省了 Z%」；
+  - 每张卡片「展开原文」旁边写「提示词 N 字」，那是这一步真正发给模型的长度；
+  - 实测肥步骤：不省 4248 字 → 省后 1361 字（省 68%）；
 - 关掉就是原来的完整内容。长会话想省钱就开它。
 
 **外观 / 主题**（设置页最上面）：
@@ -165,6 +182,9 @@ dsh plugin add link:E:/Personal/Desktop/dsh/dsh-process-lens --profile desktop
 | 风格改了但没变 | 卡片是之前讲好的，点「再讲一次」才会用新风格重讲 |
 | 提示词预览是空的 | 这个会话还没有步骤记录，预览给的是样例文本（会标「样例」） |
 | 开了省 token 细节变少 | 正常，它就是拿细节换额度；关掉即恢复 |
+| 开了省 token 字数没变 | 这步内容本来就短，压缩版会更长，插件自动按原文发（预览里会直说） |
+| 老会话只显示最后几步 | v0.2.4 已修：点开那一轮会把整轮回放补齐；再看还是少，说明那几步在 DSH 里就没记录 |
+| 切了「全部」下次又变回 N 步 | 不会，这个选择存在设置里；除非清过 process-lens.json |
 | 找不到选模型的地方了 | 在「设置」标签页里，不再占过程页的地方 |
 | 选了浅色 / 深色但看着没变 | 这两档是固定的；点「跟随壁纸」才会跟壁纸和系统深浅走 |
 | 面板没有玻璃感 | 没装壁纸插件（或那套插件没开），退回宿主默认底色，功能不受影响 |
@@ -199,9 +219,17 @@ dsh plugin add link:E:/Personal/Desktop/dsh/dsh-process-lens --profile desktop
   `activePrompt` 指向哪条就用哪条；删掉当前项会自动回到内置风格。
 - **预览**：`GET /process-lens/api/prompt?session=` 直接用 `buildPrompt()` 生成真实内容，
   不是拼一份假的给你看；会话还没步骤时给样例并标 `sample: true`。
-- **省 token**：`buildPrompt()` 里 `compact === true` 走压缩分支——
-  诉求截 120 字、每步压成一句 `briefOfStep`、思考 240 / 回答 200 / 工具 detail 80 / result 100 且最多 6 个，
+- **省 token**：拆成 `buildPromptFull()` / `buildPromptCompact()`，`buildPrompt()` 只在
+  `settings.compact === true` 且**压缩版真的更短**时才用压缩版（否则退回完整版，保证不变费）。
+  压缩版：诉求截 120 字、每步压成一句 `briefOfStep`、思考 240 / 回答 200 / 工具 detail 80 / result 100 且最多 6 个，
   末尾补一句「看清楚的就讲，看不清的别猜」。
+- **字数可见**：`runJob()` 把 `promptText.length` 记到 `entry.promptChars`，`cardOf()` 输出成 `chars`；
+  `GET /prompt` 额外算一遍完整版给 `fullChars` 和 `compactUsed`，前端据此显示省了多少 / 是否回退。
+- **老会话补齐**：`hydrateTurn(sessionId, turn)` 在完整事件里倒着找这一轮的 `turn/start`，
+  从那儿回放到末尾（普通 `hydrate()` 只看末尾 `MAX_REPLAY = 4000` 条）；`deepHydrated` Set 保证每轮只扫一次。
+  `/snapshot` 与 `/explain` 都会先调它。
+- **显示多少步**：`settings.allSteps`（默认 false）。前端过程页顶部的「最近 N 步 / 全部」直接写这个开关，
+  所以选了会记住；`recent` 仍是 N。
 - **标签页**：`state.tab`（`'process'` / `'settings'`）放在全局 store 里，切换只换渲染分支；
   过程页那一段外面套了 `.pl-frag { display: contents }`，这样它还是抽屉的 flex 子元素，
   滚动和拉伸跟以前一样。设置页是 `.pl-pane`（`flex:1; min-height:0; overflow:auto`），自己滚，
@@ -223,9 +251,11 @@ dsh plugin add link:E:/Personal/Desktop/dsh/dsh-process-lens --profile desktop
 node harness.mjs
 ```
 
-用假 ctx 跑 **51 条**断言：历史补账、messageId→轮次定位、工具人话标签、原文（含参数/返回）随卡返回、失败标红、
+用假 ctx 跑 **58 条**断言：历史补账、messageId→轮次定位、工具人话标签、原文（含参数/返回）随卡返回、失败标红、
 「只连流不点 = 0 次模型调用」、显式点讲才 1 次且用插件自己选的模型、讲失败会标 `failed` 并推流、
 「全部讲一遍」跳过讲过的、`recent` 默认值与上下限、`autoSummarize` 开关与 1–20 上限、
 四种讲解风格、系统提示里确实带三行格式要求、预览里是这一步的真实内容、
-省 token 模式带「最近 N 条概要」且没丢用户诉求、自定义提示词的存 / 切 / 删、
-外观三档（默认跟随、存深色、乱值被忽略、存浅色）、思考开关（默认关、开、只认真假、再关）。不联网、不花额度。
+省 token **真的更短**（4248 → 1361 字）且没丢用户诉求、预览会给「不省时多少字」、
+老会话点开某一轮能补齐全部 6 步、过程页「最近 N 步 / 全部」存得住、
+自定义提示词的存 / 切 / 删、外观三档（默认跟随、存深色、乱值被忽略、存浅色）、
+思考开关（默认关、开、只认真假、再关）。不联网、不花额度。

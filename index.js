@@ -51,6 +51,8 @@ const DEFAULTS = Object.freeze({
   /** 打开面板时自动讲最近几步（花额度，默认关） */
   autoSummarize: false,
   autoSummarizeCount: 3,
+  /** 过程页默认就把这一轮所有步骤摆出来（false = 只摆最近 N 步） */
+  allSteps: false,
   /** 内置讲解风格：plain / pro / brief / gentle */
   style: 'plain',
   /** 选中的自定义提示词 id（空 = 用内置风格） */
@@ -445,6 +447,8 @@ export function apply(ctx) {
       result: step.card?.result ?? '',
       explain: step.explain,
       explainError: step.error,
+      /** 上一次讲解实际发出去多少字（省 token 模式下能直接看出效果） */
+      chars: Number(step.promptChars) || 0,
       tools: toolsView(step),
       // 原文：不花 token 也能看的东西
       raw: {
@@ -513,6 +517,7 @@ export function apply(ctx) {
       compactCount: settings.compactCount,
       theme: themeOf(settings.theme),
       thinking: settings.thinking === true,
+      allSteps: settings.allSteps === true,
     }
   }
 
@@ -635,40 +640,18 @@ export function apply(ctx) {
    * 花 token 的唯一入口：用户明确点了「讲这步」或「全部讲一遍」。
    * 打开抽屉、连上推送、轮次跑完，统统不算 —— 光看不点，一分钱不花。
    */
-  function buildPrompt(record, step) {
-    const compact = settings.compact === true
+  /**
+   * 真正发出去的那一份。
+   * 省 token 不是无条件压缩：内容本来就短时，压缩版为了带上「最近 N 步概要」反而更长，
+   * 所以两边都算，只有真的更短才用压缩版——保证开了省 token 绝不会更费。
+   */
+  /**
+   * 完整版：能给多少给多少。老会话、复杂步骤用这一版讲得最细。
+   */
+  function buildPromptFull(record, step) {
     const lines = []
-    if (record.request) lines.push(`用户提的诉求：${clip(record.request, compact ? 120 : REQUEST_CHARS)}`)
+    if (record.request) lines.push(`用户提的诉求：${clip(record.request, REQUEST_CHARS)}`)
     lines.push(`这是这一轮里的第 ${step.step} 步。`)
-
-    if (compact) {
-      // 省 token 模式：整轮只给一句话概要 + 当前步的压缩信息
-      const keep = Math.min(50, Math.max(1, Math.round(Number(settings.compactCount) || 5)))
-      const recent = [...record.steps.values()].slice(-keep)
-      lines.push(`省 token 模式：信息已压缩，一共只给最近 ${recent.length} 步的要点。`)
-      for (const item of recent) {
-        const mark = item.step === step.step ? '（就是这步）' : ''
-        lines.push(`- 第 ${item.step} 步${mark}：${briefOfStep(item)}`)
-      }
-      if (step.reasoning) lines.push(`它在想（压缩）：${oneLine(step.reasoning, 240)}`)
-      if (step.answer) lines.push(`它在写（压缩）：${oneLine(step.answer, 200)}`)
-      if (step.tools.length > 0) {
-        lines.push('这一步的操作（压缩）：')
-        for (const tool of step.tools.slice(-6)) {
-          const detail = tool.detail ? `（${clip(tool.detail, 80)}）` : ''
-          const outcome =
-            tool.state === 'error'
-              ? `失败：${oneLine(tool.error || '出错了', 100)}`
-              : tool.state === 'running'
-                ? '还在进行'
-                : `返回：${oneLine(tool.result, 100) || '没有内容'}`
-          lines.push(`- ${toolLabel(tool.name)}${detail} → ${outcome}`)
-        }
-      }
-      lines.push('看清楚的就讲，看不清的别猜。请按三行格式讲给用户听。')
-      return lines.join('\n')
-    }
-
     if (step.reasoning) lines.push(`助手在这一步的内部思考（节选）：${clip(step.reasoning, REASONING_CHARS)}`)
     if (step.answer) lines.push(`助手在这一步写下的话（节选）：${clip(step.answer, ANSWER_CHARS)}`)
     if (step.tools.length === 0) {
@@ -691,6 +674,50 @@ export function apply(ctx) {
     return lines.join('\n')
   }
 
+  /**
+   * 压缩版：整轮只给最近 N 步的要点，当前这一步的细节也砍到最低。
+   */
+  function buildPromptCompact(record, step) {
+    const lines = []
+    if (record.request) lines.push(`用户提的诉求：${clip(record.request, 120)}`)
+    lines.push(`这是这一轮里的第 ${step.step} 步。`)
+    const keep = Math.min(50, Math.max(1, Math.round(Number(settings.compactCount) || 5)))
+    const recent = [...record.steps.values()].slice(-keep)
+    lines.push(`省 token 模式：信息已压缩，一共只给最近 ${recent.length} 步的要点。`)
+    for (const item of recent) {
+      const mark = item.step === step.step ? '（就是这步）' : ''
+      lines.push(`- 第 ${item.step} 步${mark}：${briefOfStep(item)}`)
+    }
+    if (step.reasoning) lines.push(`它在想（压缩）：${oneLine(step.reasoning, 240)}`)
+    if (step.answer) lines.push(`它在写（压缩）：${oneLine(step.answer, 200)}`)
+    if (step.tools.length > 0) {
+      lines.push('这一步的操作（压缩）：')
+      for (const tool of step.tools.slice(-6)) {
+        const detail = tool.detail ? `（${clip(tool.detail, 80)}）` : ''
+        const outcome =
+          tool.state === 'error'
+            ? `失败：${oneLine(tool.error || '出错了', 100)}`
+            : tool.state === 'running'
+              ? '还在进行'
+              : `返回：${oneLine(tool.result, 100) || '没有内容'}`
+        lines.push(`- ${toolLabel(tool.name)}${detail} → ${outcome}`)
+      }
+    }
+    lines.push('看清楚的就讲，看不清的别猜。请按三行格式讲给用户听。')
+    return lines.join('\n')
+  }
+
+  /**
+   * 真正发出去的那一份。
+   * 省 token 不是无条件压缩：内容本来就短时，压缩版为了带上「最近 N 步概要」反而更长，
+   * 所以两边都算，只有真的更短才用压缩版——保证开了省 token 绝不会更费。
+   */
+  function buildPrompt(record, step) {
+    const full = buildPromptFull(record, step)
+    if (settings.compact !== true) return full
+    const compact = buildPromptCompact(record, step)
+    return compact.length < full.length ? compact : full
+  }
   function enqueue(sessionId, turn, step, force) {
     if (replaying) return
     const record = sessions.get(String(sessionId))?.turns.get(turn)
@@ -736,7 +763,9 @@ export function apply(ctx) {
     try {
       const route = resolveRoute(job.sessionId)
       if (!route) throw new Error('还没选好讲解模型，请在抽屉顶部挑一个')
-      const text = await callOnce(route, buildPrompt(record, entry), systemPromptNow())
+      const promptText = buildPrompt(record, entry)
+      entry.promptChars = promptText.length
+      const text = await callOnce(route, promptText, systemPromptNow())
       if (!text) throw new Error('模型这次没有返回内容')
       const card = parseCard(text)
       entry.card = card
@@ -791,6 +820,58 @@ export function apply(ctx) {
       replaying = false
     }
     sessionBucket(key).hydrated = true
+  }
+
+  /**
+   * 针对「某一轮」做一次深扫：从这一轮的 turn/start 一直回放到末尾。
+   * 普通 hydrate 只回放末尾 MAX_REPLAY 条事件，老会话的早期步骤会丢；
+   * 用户点开某一轮时用它把整轮补齐。同一轮只扫一次。
+   */
+  const deepHydrated = new Set()
+
+  function hydrateTurn(sessionId, turn) {
+    const key = String(sessionId)
+    const wanted = Number(turn)
+    if (!key || !Number.isFinite(wanted) || wanted <= 0) return
+    const stamp = `${key}:${wanted}`
+    if (deepHydrated.has(stamp)) return
+    let session = null
+    try {
+      session = ctx.get('sessions')?.get?.(key) ?? null
+    } catch {
+      session = null
+    }
+    if (!session || typeof session.snapshotEvents !== 'function') return
+    let events = []
+    try {
+      events = session.snapshotEvents() ?? []
+    } catch {
+      events = []
+    }
+    if (events.length === 0) return
+    let from = -1
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index]
+      if (event?.type !== 'turn/start') continue
+      if (Number(event.data?.turn) === wanted) {
+        from = index
+        break
+      }
+    }
+    if (from < 0) {
+      deepHydrated.add(stamp)
+      return
+    }
+    replaying = true
+    try {
+      for (let index = from; index < events.length; index += 1) {
+        const event = events[index]
+        if (event?.type) onSessionEvent(session, event)
+      }
+    } finally {
+      replaying = false
+    }
+    deepHydrated.add(stamp)
   }
 
   // ── 事件接线 ────────────────────────────────────────────────────────────────
@@ -1015,6 +1096,7 @@ export function apply(ctx) {
           settings.compactCount = Math.min(50, Math.max(1, Math.round(Number(body.compactCount))))
         if (body.theme === 'auto' || body.theme === 'light' || body.theme === 'dark') settings.theme = body.theme
         if (typeof body.thinking === 'boolean') settings.thinking = body.thinking
+        if (typeof body.allSteps === 'boolean') settings.allSteps = body.allSteps
         if (Number.isFinite(Number(body.maxTokens))) settings.maxTokens = Math.min(4000, Math.max(400, Number(body.maxTokens)))
         saveSettingsSoon()
         writeJson(res, 200, { ok: true, settings: publicSettings() })
@@ -1047,6 +1129,7 @@ export function apply(ctx) {
         const sessionId = url.searchParams.get('session') ?? ''
         const turn = Number(url.searchParams.get('turn'))
         hydrate(sessionId)
+        if (Number.isFinite(turn)) hydrateTurn(sessionId, turn)
         writeJson(res, 200, { ok: true, data: snapshotOf(sessionId, turn) })
         return
       }
@@ -1055,6 +1138,7 @@ export function apply(ctx) {
         const sessionId = String(body.session ?? '')
         const turn = Number(body.turn)
         hydrate(sessionId)
+        if (Number.isFinite(turn)) hydrateTurn(sessionId, turn)
         const record = sessions.get(sessionId)?.turns.get(turn)
         if (!record) {
           writeJson(res, 404, { ok: false, error: '这一轮还没记录' })
@@ -1088,6 +1172,14 @@ export function apply(ctx) {
           ? buildPrompt(lastTurn, lastStep)
           : '（还没记录到这一步，先看个格式样例）\n这是这一轮里的第 1 步。\n这一步没有调用任何工具，只是模型自己在想/在写。\n请按三行格式讲给用户听。'
         const system = systemPromptNow()
+        // 同一份数据按「不省 token」再算一遍，好让用户直接看见省了多少
+        let fullChars = system.length + user.length
+        let compactUsed = false
+        if (lastTurn && lastStep) {
+          const fullUser = buildPromptFull(lastTurn, lastStep)
+          fullChars = system.length + fullUser.length
+          compactUsed = settings.compact === true && user !== fullUser
+        }
         writeJson(res, 200, {
           ok: true,
           ...styleView(),
@@ -1099,6 +1191,8 @@ export function apply(ctx) {
           system,
           user,
           chars: system.length + user.length,
+          fullChars,
+          compactUsed,
         })
         return
       }

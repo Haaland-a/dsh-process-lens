@@ -242,11 +242,45 @@ const prompt1 = await hit(`/process-lens/api/prompt?session=${SESSION_ID}`)
 check('能看到系统提示词', String(prompt1.json?.system ?? '').includes('标题：'), String(prompt1.json?.system ?? '').slice(0, 40))
 check('能看到这一步的真实内容', String(prompt1.json?.user ?? '').includes('第 1 步'), String(prompt1.json?.user ?? '').slice(0, 60))
 
-// 13) 省 token 模式确实更短
+// 13) 省 token 模式：内容肥的时候必须真的更短
 await hit('/process-lens/api/config', 'POST', { compact: false })
+// 造一轮很肥的记录：一段 3000 字的回答 + 12 个工具，压缩才有意义
+events.push({ type: 'turn/start', time: 4000, data: { turn: 5 } })
+events.push({ type: 'user/message', time: 4001, data: { role: 'user', content: [{ type: 'text', text: '把这一轮日志全看一遍' }] } })
+events.push({ type: 'step/start', time: 4010, data: { turn: 5, step: 1 } })
+events.push({
+  type: 'assistant/message',
+  time: 4011,
+  data: {
+    turn: 5,
+    step: 1,
+    message: { id: 'MSG-FAT', content: [{ type: 'text', text: '我把日志一条条看过了。'.repeat(220) }] },
+    stream: [],
+  },
+})
+for (let index = 1; index <= 12; index += 1) {
+  events.push({
+    type: 'tool/call',
+    time: 4020 + index,
+    data: { turn: 5, step: 1, callId: `f${index}`, name: 'read', arguments: JSON.stringify({ file_path: `E:/logs/${index}.log` }) },
+  })
+  events.push({
+    type: 'tool/result',
+    time: 4030 + index,
+    data: { turn: 5, step: 1, message: { toolCallId: `f${index}`, content: [{ type: 'text', text: '日志内容很多行。'.repeat(40) }] } },
+  })
+}
+events.push({ type: 'step/end', time: 4090, data: { turn: 5, step: 1 } })
+events.push({ type: 'turn/end', time: 4099, data: { turn: 5, reason: { kind: 'completed' } } })
+await hit(`/process-lens/api/snapshot?session=${SESSION_ID}&turn=5`)
 const bigPrompt = await hit(`/process-lens/api/prompt?session=${SESSION_ID}`)
 await hit('/process-lens/api/config', 'POST', { compact: true, compactCount: 5 })
 const smallPrompt = await hit(`/process-lens/api/prompt?session=${SESSION_ID}`)
+check(
+  '省 token 真的更短',
+  Number(smallPrompt.json?.chars) < Number(bigPrompt.json?.chars) * 0.6,
+  `省后 ${smallPrompt.json?.chars} 字 / 不省 ${bigPrompt.json?.chars} 字`,
+)
 check(
   '省 token 模式会带「最近 N 条概要」',
   String(smallPrompt.json?.user ?? '').includes('一共只给最近') && String(smallPrompt.json?.user ?? '').includes('第 1 步'),
@@ -258,6 +292,7 @@ check(
   String(smallPrompt.json?.user ?? '').slice(0, 40),
 )
 check('省 token 模式会说明是压缩过的', String(smallPrompt.json?.user ?? '').includes('省 token'), String(smallPrompt.json?.user ?? '').slice(0, 40))
+check('预览会说明这次真的用了压缩版', smallPrompt.json?.compactUsed === true, smallPrompt.json?.compactUsed)
 
 // 14) 自定义提示词存档
 const savedPrompt = await hit('/process-lens/api/prompts', 'POST', { action: 'save', name: '给老板看', text: '一句话说完，别讲细节。' })
@@ -291,6 +326,42 @@ const thinkBad = await hit('/process-lens/api/config', 'POST', { thinking: 'yes'
 check('思考开关只认真假', thinkBad.json?.settings?.thinking === true, thinkBad.json?.settings?.thinking)
 const thinkOff = await hit('/process-lens/api/config', 'POST', { thinking: false })
 check('可以再关掉', thinkOff.json?.settings?.thinking === false, thinkOff.json?.settings?.thinking)
+// 17) 省 token 到底省了多少：同一份数据按两种模式各算一遍字数
+const savings = await hit(`/process-lens/api/prompt?session=${SESSION_ID}`)
+check(
+  '预览里能算出不省 token 时的字数',
+  Number(savings.json?.fullChars) > Number(savings.json?.chars),
+  `省后 ${savings.json?.chars} / 不省 ${savings.json?.fullChars}`,
+)
+
+// 18) 老会话：点开某一轮要把整轮都补回来（末尾 4000 条事件之外的部分也要）
+for (let index = 0; index < 4100; index += 1) {
+  events.push({ type: 'code/event', time: 3000 + index, data: {} })
+}
+events.push({ type: 'turn/start', time: 9000, data: { turn: 3 } })
+events.push({ type: 'user/message', time: 9001, data: { role: 'user', content: [{ type: 'text', text: '把老会话补全' }] } })
+for (let step = 1; step <= 6; step += 1) {
+  events.push({ type: 'step/start', time: 9100 + step, data: { turn: 3, step } })
+  const args = JSON.stringify({ file_path: `E:/x${step}.js` })
+  events.push({ type: 'tool/call', time: 9100 + step, data: { turn: 3, step, callId: `d${step}`, name: 'read', arguments: args } })
+  events.push({ type: 'tool/result', time: 9140 + step, data: { turn: 3, step, message: { toolCallId: `d${step}`, content: [{ type: 'text', text: `读完 ${step}` }] } } })
+  events.push({ type: 'step/end', time: 9150 + step, data: { turn: 3, step } })
+}
+events.push({ type: 'turn/end', time: 9200, data: { turn: 3, reason: { kind: 'completed' } } })
+const deep = await hit(`/process-lens/api/snapshot?session=${SESSION_ID}&turn=3`)
+check(
+  '老会话点开某一轮能看到全部 6 步',
+  deep.json?.data?.steps?.length === 6,
+  `拿到 ${deep.json?.data?.steps?.length} 步`,
+)
+check('补回来的步骤带工具行', Boolean(deep.json?.data?.steps?.[0]?.tools?.[0]?.label), deep.json?.data?.steps?.[0]?.tools?.[0]?.label)
+
+// 19) 过程页「最近 N 步 / 全部」这个选项存得住
+const allStepsOn = await hit('/process-lens/api/config', 'POST', { allSteps: true })
+check('能选「全部步骤」', allStepsOn.json?.settings?.allSteps === true, allStepsOn.json?.settings?.allSteps)
+const allStepsBack = await hit('/process-lens/api/config', 'POST', { allSteps: false })
+check('能切回最近 N 步', allStepsBack.json?.settings?.allSteps === false, allStepsBack.json?.settings?.allSteps)
+
 const failed = checks.filter((item) => !item.ok)
 console.log(`\n${checks.length - failed.length}/${checks.length} 通过`)
 if (failed.length) process.exitCode = 1
