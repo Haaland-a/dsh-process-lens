@@ -51,6 +51,16 @@ const DEFAULTS = Object.freeze({
   /** 打开面板时自动讲最近几步（花额度，默认关） */
   autoSummarize: false,
   autoSummarizeCount: 3,
+  /** 内置讲解风格：plain / pro / brief / gentle */
+  style: 'plain',
+  /** 选中的自定义提示词 id（空 = 用内置风格） */
+  activePrompt: '',
+  /** 自定义提示词存档：[{ id, name, text }] */
+  prompts: [],
+  /** 省 token 模式：整轮只给压缩概要 */
+  compact: false,
+  /** 省 token 模式带最近几步 */
+  compactCount: 5,
 })
 
 /** 原文存多少：够看全文，又不至于把内存吃穿 */
@@ -89,16 +99,56 @@ const TOOL_LABELS = {
 }
 
 /** 讲解提示词：给完全不懂技术的人讲。 */
-const SYSTEM_PROMPT = [
-  '你是「过程讲解员」，负责把 AI 助手刚才做的事，用中文大白话讲给完全不懂技术的人听。',
-  '硬性要求：',
-  '1. 不出现代码、文件路径原文、英文缩写、工具名；必须提到时用"文件""命令""搜索"这类日常说法。',
-  '2. 不用 markdown，不写列表，不写多余的客套话。',
-  '3. 只输出三行，格式严格如下：',
+// ── 讲解风格 / 提示词 ─────────────────────────────────────────────────────────
+
+/** 不管用哪种风格，最后都得是三行——不然前端没法拆。 */
+const OUTPUT_RULES = [
+  '输出格式（硬性要求，一个字都不能改）：',
+  '只输出三行，顺序固定：',
   '标题：不超过 14 个字，说清这一步在干什么',
   '在做什么：不超过 100 个字，说清为什么要做这一步',
   '结果：不超过 100 个字，说清得到了什么、顺不顺利、有没有卡住',
+  '不写 markdown、不写列表、不写开场白、不写客套话。',
 ].join('\n')
+
+/** 内置风格：只换"怎么说"，不换"必须说三行"。 */
+const STYLE_PRESETS = {
+  plain: {
+    name: '通俗',
+    hint: '大白话，谁都能懂',
+    persona: [
+      '你是「过程讲解员」，负责把 AI 助手刚才做的事，用中文大白话讲给完全不懂技术的人听。',
+      '不出现代码、文件路径原文、英文缩写、工具名；必须提到时用「文件」「命令」「搜索」这类日常说法。',
+    ].join('\n'),
+  },
+  pro: {
+    name: '专业',
+    hint: '工程师视角，术语准确',
+    persona: [
+      '你是「过程讲解员」，读者是有经验的技术负责人。用专业但克制的中文讲清这一步的技术动作。',
+      '可以用准确术语（接口、注入、迁移、重试、并发、幂等），但不贴大段代码，不做评价式夸奖。',
+      '信息不足时直说"从这一步看不出来"，不要编。',
+    ].join('\n'),
+  },
+  brief: {
+    name: '一句话',
+    hint: '极简，每行都很短',
+    persona: [
+      '你是「过程讲解员」，读者只想快速扫一眼。',
+      '标题控制在 6–10 个字，另外两行各不超过 30 个字，只留最关键的信息，多余细节一律不写。',
+    ].join('\n'),
+  },
+  gentle: {
+    name: '给新手',
+    hint: '当对方第一次用这类工具',
+    persona: [
+      '你是「过程讲解员」，读者第一次接触这类工具。用生活化的比喻解释，必要时说明"为什么要这么做"。',
+      '不出现任何英文、代码、路径、工具名。语气耐心，但不要卖萌、不要客套、不要鼓励式废话。',
+    ].join('\n'),
+  },
+}
+
+const STYLE_IDS = Object.keys(STYLE_PRESETS)
 
 // ── 小工具 ────────────────────────────────────────────────────────────────────
 
@@ -228,6 +278,55 @@ export function apply(ctx) {
       }
     } catch {}
   })()
+
+  // ── 风格与提示词 ────────────────────────────────────────────────────────────
+
+  function promptList() {
+    return Array.isArray(settings.prompts) ? settings.prompts.filter((item) => item && item.id) : []
+  }
+
+  function activeCustom() {
+    const id = String(settings.activePrompt ?? '')
+    if (!id) return null
+    return promptList().find((item) => item.id === id) ?? null
+  }
+
+  function currentStyle() {
+    return STYLE_PRESETS[settings.style] ?? STYLE_PRESETS.plain
+  }
+
+  /** 真正发给模型的 system：选了自己存的提示词就用它，否则用内置风格。 */
+  function systemPromptNow() {
+    const custom = activeCustom()
+    const persona = custom?.text?.trim() ? custom.text.trim() : currentStyle().persona
+    return `${persona}\n\n${OUTPUT_RULES}`
+  }
+
+  function styleView() {
+    const custom = activeCustom()
+    const preset = currentStyle()
+    return {
+      style: STYLE_PRESETS[settings.style] ? settings.style : 'plain',
+      styleName: custom ? custom.name : preset.name,
+      styleHint: custom ? '你自己存的那份' : preset.hint,
+      activePrompt: custom?.id ?? '',
+      activePromptName: custom?.name ?? '',
+      custom: custom ? { id: custom.id, name: custom.name, text: custom.text } : null,
+    }
+  }
+
+  function stylesView() {
+    return STYLE_IDS.map((id) => ({ id, name: STYLE_PRESETS[id].name, hint: STYLE_PRESETS[id].hint }))
+  }
+
+  /** 省 token 模式用：把一步压成一句话。 */
+  function briefOfStep(step) {
+    const last = step.tools.at(-1)
+    if (!last) return step.card?.title ? `${step.card.title}·自己在想` : '自己在想'
+    const state = last.state === 'error' ? '失败' : last.state === 'running' ? '进行中' : '成功'
+    const title = step.card?.title ? `${step.card.title}·` : ''
+    return `${title}${toolLabel(last.name)}（${state}）`
+  }
 
   function saveSettingsSoon() {
     if (saveTimer) clearTimeout(saveTimer)
@@ -398,6 +497,11 @@ export function apply(ctx) {
       recent: settings.recent,
       autoSummarize: settings.autoSummarize === true,
       autoSummarizeCount: settings.autoSummarizeCount,
+      ...styleView(),
+      styles: stylesView(),
+      prompts: promptList(),
+      compact: settings.compact === true,
+      compactCount: settings.compactCount,
     }
   }
 
@@ -477,7 +581,7 @@ export function apply(ctx) {
     }
   }
 
-  async function callOnce(route, prompt) {
+  async function callOnce(route, prompt, system) {
     const llm = ctx.get('llm')
     if (!llm?.stream) throw new Error('讲解服务不可用')
     const controller = new AbortController()
@@ -489,7 +593,7 @@ export function apply(ctx) {
         provider: route.provider,
         model: route.model,
         messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
-        system: SYSTEM_PROMPT,
+        system: system ?? systemPromptNow(),
         maxTokens: Number(settings.maxTokens) || DEFAULTS.maxTokens,
         temperature: 0.3,
         signal: controller.signal,
@@ -512,9 +616,39 @@ export function apply(ctx) {
    * 打开抽屉、连上推送、轮次跑完，统统不算 —— 光看不点，一分钱不花。
    */
   function buildPrompt(record, step) {
+    const compact = settings.compact === true
     const lines = []
-    if (record.request) lines.push(`用户提的诉求：${clip(record.request, REQUEST_CHARS)}`)
+    if (record.request) lines.push(`用户提的诉求：${clip(record.request, compact ? 120 : REQUEST_CHARS)}`)
     lines.push(`这是这一轮里的第 ${step.step} 步。`)
+
+    if (compact) {
+      // 省 token 模式：整轮只给一句话概要 + 当前步的压缩信息
+      const keep = Math.min(50, Math.max(1, Math.round(Number(settings.compactCount) || 5)))
+      const recent = [...record.steps.values()].slice(-keep)
+      lines.push(`省 token 模式：信息已压缩，一共只给最近 ${recent.length} 步的要点。`)
+      for (const item of recent) {
+        const mark = item.step === step.step ? '（就是这步）' : ''
+        lines.push(`- 第 ${item.step} 步${mark}：${briefOfStep(item)}`)
+      }
+      if (step.reasoning) lines.push(`它在想（压缩）：${oneLine(step.reasoning, 240)}`)
+      if (step.answer) lines.push(`它在写（压缩）：${oneLine(step.answer, 200)}`)
+      if (step.tools.length > 0) {
+        lines.push('这一步的操作（压缩）：')
+        for (const tool of step.tools.slice(-6)) {
+          const detail = tool.detail ? `（${clip(tool.detail, 80)}）` : ''
+          const outcome =
+            tool.state === 'error'
+              ? `失败：${oneLine(tool.error || '出错了', 100)}`
+              : tool.state === 'running'
+                ? '还在进行'
+                : `返回：${oneLine(tool.result, 100) || '没有内容'}`
+          lines.push(`- ${toolLabel(tool.name)}${detail} → ${outcome}`)
+        }
+      }
+      lines.push('看清楚的就讲，看不清的别猜。请按三行格式讲给用户听。')
+      return lines.join('\n')
+    }
+
     if (step.reasoning) lines.push(`助手在这一步的内部思考（节选）：${clip(step.reasoning, REASONING_CHARS)}`)
     if (step.answer) lines.push(`助手在这一步写下的话（节选）：${clip(step.answer, ANSWER_CHARS)}`)
     if (step.tools.length === 0) {
@@ -582,7 +716,7 @@ export function apply(ctx) {
     try {
       const route = resolveRoute(job.sessionId)
       if (!route) throw new Error('还没选好讲解模型，请在抽屉顶部挑一个')
-      const text = await callOnce(route, buildPrompt(record, entry))
+      const text = await callOnce(route, buildPrompt(record, entry), systemPromptNow())
       if (!text) throw new Error('模型这次没有返回内容')
       const card = parseCard(text)
       entry.card = card
@@ -853,6 +987,12 @@ export function apply(ctx) {
         if (typeof body.autoSummarize === 'boolean') settings.autoSummarize = body.autoSummarize
         if (Number.isFinite(Number(body.autoSummarizeCount)))
           settings.autoSummarizeCount = Math.min(20, Math.max(1, Math.round(Number(body.autoSummarizeCount))))
+        if (STYLE_PRESETS[body.style]) settings.style = body.style
+        if (typeof body.activePrompt === 'string')
+          settings.activePrompt = promptList().some((item) => item.id === body.activePrompt) ? body.activePrompt : ''
+        if (typeof body.compact === 'boolean') settings.compact = body.compact
+        if (Number.isFinite(Number(body.compactCount)))
+          settings.compactCount = Math.min(50, Math.max(1, Math.round(Number(body.compactCount))))
         if (Number.isFinite(Number(body.maxTokens))) settings.maxTokens = Math.min(4000, Math.max(400, Number(body.maxTokens)))
         saveSettingsSoon()
         writeJson(res, 200, { ok: true, settings: publicSettings() })
@@ -914,6 +1054,67 @@ export function apply(ctx) {
         }
         for (const step of targets) enqueue(sessionId, turn, step, true)
         writeJson(res, 200, { ok: true, steps: targets })
+        return
+      }
+      if (route === '/prompt' && method === 'GET') {
+        const sessionId = url.searchParams.get('session') ?? ''
+        hydrate(sessionId)
+        const bucket = sessions.get(sessionId)
+        const lastTurn = bucket ? [...bucket.turns.values()].at(-1) : null
+        const lastStep = lastTurn ? [...lastTurn.steps.values()].at(-1) : null
+        const user = lastTurn && lastStep
+          ? buildPrompt(lastTurn, lastStep)
+          : '（还没记录到这一步，先看个格式样例）\n这是这一轮里的第 1 步。\n这一步没有调用任何工具，只是模型自己在想/在写。\n请按三行格式讲给用户听。'
+        const system = systemPromptNow()
+        writeJson(res, 200, {
+          ok: true,
+          ...styleView(),
+          styles: stylesView(),
+          prompts: promptList(),
+          compact: settings.compact === true,
+          compactCount: settings.compactCount,
+          sample: Boolean(lastStep) === false,
+          system,
+          user,
+          chars: system.length + user.length,
+        })
+        return
+      }
+      if (route === '/prompts' && method === 'POST') {
+        const body = await readBody(req)
+        const action = String(body.action ?? '')
+        if (action === 'save') {
+          const text = clip(String(body.text ?? '').trim(), 4000)
+          if (!text) {
+            writeJson(res, 400, { ok: false, error: '提示词内容不能是空的' })
+            return
+          }
+          const name = oneLine(body.name, 40) || '没起名字的提示词'
+          const list = promptList().slice()
+          const id = String(body.id ?? '')
+          const existing = list.find((item) => item.id === id)
+          if (existing) {
+            existing.name = name
+            existing.text = text
+          } else {
+            const fresh = { id: `p${Date.now().toString(36)}`, name, text }
+            list.push(fresh)
+            settings.activePrompt = fresh.id
+          }
+          settings.prompts = list
+        } else if (action === 'delete') {
+          const id = String(body.id ?? '')
+          settings.prompts = promptList().filter((item) => item.id !== id)
+          if (String(settings.activePrompt ?? '') === id) settings.activePrompt = ''
+        } else if (action === 'select') {
+          const id = String(body.id ?? '')
+          settings.activePrompt = promptList().some((item) => item.id === id) ? id : ''
+        } else {
+          writeJson(res, 400, { ok: false, error: '不认识的操作' })
+          return
+        }
+        saveSettingsSoon()
+        writeJson(res, 200, { ok: true, prompts: promptList(), settings: publicSettings() })
         return
       }
       writeJson(res, 404, { ok: false, error: 'not-found' })

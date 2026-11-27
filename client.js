@@ -26,7 +26,21 @@ window.__ModuleLoader__.load({
       sessionId: null,
       turn: null,
       notice: null,
-      config: { provider: '', model: '', mode: 'onDemand', autoOpen: false, recent: 8, autoSummarize: false, autoSummarizeCount: 3 },
+      config: {
+        provider: '',
+        model: '',
+        mode: 'onDemand',
+        autoOpen: false,
+        recent: 8,
+        autoSummarize: false,
+        autoSummarizeCount: 3,
+        style: 'plain',
+        activePrompt: '',
+        prompts: [],
+        styles: [],
+        compact: false,
+        compactCount: 5,
+      },
       configLoaded: false,
       providers: null,
       modelsError: null,
@@ -307,6 +321,238 @@ window.__ModuleLoader__.load({
       )
     }
 
+    // ── 提示词工作台：风格 / 存档 / 预览 / 省 token ──────────────────────────────
+
+    function PromptStudio({ lens }) {
+      const [panel, setPanel] = useState('') // '' | 'preview' | 'new'
+      const [preview, setPreview] = useState(null)
+      const [busy, setBusy] = useState(false)
+      const [draftName, setDraftName] = useState('')
+      const [draftText, setDraftText] = useState('')
+      const [editingId, setEditingId] = useState('')
+
+      const styles = lens.config.styles?.length
+        ? lens.config.styles
+        : [
+            { id: 'plain', name: '通俗', hint: '大白话' },
+            { id: 'pro', name: '专业', hint: '术语准确' },
+            { id: 'brief', name: '一句话', hint: '极简' },
+            { id: 'gentle', name: '给新手', hint: '第一次用' },
+          ]
+      const prompts = Array.isArray(lens.config.prompts) ? lens.config.prompts : []
+      const activeId = lens.config.activePrompt || ''
+      const styleValue = activeId ? `p::${activeId}` : `s::${lens.config.style || 'plain'}`
+      const compactValue = Number.isFinite(Number(lens.config.compactCount)) ? Number(lens.config.compactCount) : 5
+
+      const query = () => (lens.sessionId ? `?session=${encodeURIComponent(String(lens.sessionId))}` : '')
+
+      const loadPreview = async () => {
+        setBusy(true)
+        try {
+          const data = await apiGet(`/prompt${query()}`)
+          setPreview(data)
+          setPanel('preview')
+        } catch (error) {
+          setState({ notice: `读不到提示词：${error?.message ?? error}` })
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      const act = async (action, payload) => {
+        setBusy(true)
+        try {
+          const data = await apiPost('/prompts', { action, ...payload })
+          if (data?.settings) setState({ config: { ...state.config, ...data.settings } })
+          if (panel === 'preview') await loadPreview()
+        } catch (error) {
+          setState({ notice: `没存上：${error?.message ?? error}` })
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      const saveDraft = async () => {
+        if (!draftText.trim()) {
+          setState({ notice: '提示词是空的，写两句再存' })
+          return
+        }
+        await act('save', { id: editingId, name: draftName.trim() || '我的提示词', text: draftText })
+        setDraftName('')
+        setDraftText('')
+        setEditingId('')
+        setPanel('')
+      }
+
+      const openDraft = (item) => {
+        if (item) {
+          setEditingId(item.id)
+          setDraftName(item.name)
+          setDraftText(item.text)
+          setPanel('new')
+          return
+        }
+        setEditingId('')
+        setDraftName('')
+        setDraftText('')
+        setPanel(panel === 'new' ? '' : 'new')
+      }
+
+      return h(
+        'div',
+        { className: 'pl-studio' },
+        h(
+          'div',
+          { className: 'pl-row' },
+          h('span', { className: 'pl-key' }, '总结风格'),
+          h(
+            'select',
+            {
+              className: 'pl-select',
+              value: styleValue,
+              onChange: (event) => {
+                const raw = String(event.target.value ?? '')
+                if (raw.startsWith('p::')) void saveConfig({ activePrompt: raw.slice(3) })
+                else void saveConfig({ activePrompt: '', style: raw.slice(3) })
+              },
+              title: '只换"怎么说"，三行格式不变，拆卡片不会坏',
+            },
+            h(
+              'optgroup',
+              { label: '内置' },
+              ...styles.map((item) => h('option', { key: item.id, value: `s::${item.id}` }, `${item.name} · ${item.hint}`)),
+            ),
+            prompts.length
+              ? h(
+                  'optgroup',
+                  { label: '我的存档' },
+                  ...prompts.map((item) => h('option', { key: item.id, value: `p::${item.id}` }, item.name)),
+                )
+              : null,
+          ),
+        ),
+        h(
+          'div',
+          { className: 'pl-row' },
+          h('span', { className: 'pl-key' }, '省 token'),
+          h(
+            'label',
+            { className: 'pl-switch', title: '开了：整轮只把最近几条压成概要再发给模型，能省很多额度；关着：给尽量完整的原文' },
+            h('input', {
+              type: 'checkbox',
+              checked: lens.config.compact === true,
+              onChange: (event) => void saveConfig({ compact: event.target.checked }),
+            }),
+            h('span', { className: 'pl-switch-box' }),
+            h('span', { className: 'pl-switch-text' }, lens.config.compact ? '开' : '关'),
+          ),
+          h('input', {
+            key: `compact-${compactValue}`,
+            type: 'number',
+            className: 'pl-num',
+            min: 1,
+            max: 50,
+            step: 1,
+            defaultValue: compactValue,
+            onBlur: (event) => {
+              const next = Math.min(50, Math.max(1, Math.round(Number(event.target.value) || 5)))
+              event.target.value = String(next)
+              void saveConfig({ compactCount: next })
+            },
+            onKeyDown: (event) => {
+              if (event.key === 'Enter') event.target.blur()
+            },
+            title: '只带最近这么多条概要',
+          }),
+          h('span', { className: 'pl-unit' }, '条'),
+          ...[5, 10].map((n) =>
+            h(
+              'button',
+              { key: `quick-${n}`, type: 'button', className: 'pl-mini', onClick: () => void saveConfig({ compactCount: n }) },
+              String(n),
+            ),
+          ),
+        ),
+        h(
+          'div',
+          { className: 'pl-row' },
+          h('span', { className: 'pl-key' }, '提示词'),
+          h('button', { type: 'button', className: 'pl-mini', onClick: () => void loadPreview(), disabled: busy }, busy ? '读取中…' : '看当前提示词'),
+          h('button', { type: 'button', className: 'pl-mini', onClick: () => openDraft(null) }, panel === 'new' ? '取消' : '新建存档'),
+        ),
+        panel === 'preview' && preview
+          ? h(
+              'div',
+              { className: 'pl-pre-wrap' },
+              h(
+                'div',
+                { className: 'pl-pre-head' },
+                `发给模型的提示词 · 共 ${preview.chars} 字 · 风格：${preview.styleName}` +
+                  (preview.compact ? ` · 省 token 已开（最近 ${preview.compactCount} 条）` : ''),
+              ),
+              h('div', { className: 'pl-pre-label' }, '一、系统提示（角色 + 三行格式）'),
+              h('pre', { className: 'pl-pre' }, preview.system),
+              h('div', { className: 'pl-pre-label' }, preview.sample ? '二、用户消息（示例：还没记录到这一步）' : '二、用户消息（当前这一步的真实内容）'),
+              h('pre', { className: 'pl-pre' }, preview.user),
+              h('button', { type: 'button', className: 'pl-mini', onClick: () => setPanel('') }, '收起'),
+            )
+          : null,
+        panel === 'new'
+          ? h(
+              'div',
+              { className: 'pl-draft' },
+              h('input', {
+                className: 'pl-input',
+                placeholder: '起个名，例如：给老板看 / 只讲结论',
+                value: draftName,
+                onInput: (event) => setDraftName(event.target.value),
+              }),
+              h('textarea', {
+                className: 'pl-area',
+                rows: 5,
+                placeholder: '写你想让讲解员怎么说话。三行格式（标题 / 在做什么 / 结果）是硬要求，插件会自动补在后面。',
+                value: draftText,
+                onInput: (event) => setDraftText(event.target.value),
+              }),
+              h(
+                'div',
+                { className: 'pl-draft-foot' },
+                h('button', { type: 'button', className: 'pl-mini is-primary', onClick: () => void saveDraft(), disabled: busy }, editingId ? '存这份改动' : '存成存档'),
+                h('span', { className: 'pl-unit' }, '存下后自动切到这份'),
+              ),
+            )
+          : null,
+        prompts.length
+          ? h(
+              'div',
+              { className: 'pl-archive' },
+              ...prompts.map((item) =>
+                h(
+                  'div',
+                  { key: item.id, className: 'pl-archive-row' },
+                  h('span', { className: 'pl-archive-name', title: item.text }, item.name),
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: 'pl-mini',
+                      onClick: () => void act('select', { id: item.id }),
+                      disabled: busy || item.id === activeId,
+                    },
+                    item.id === activeId ? '在用' : '用这个',
+                  ),
+                  h('button', { type: 'button', className: 'pl-mini', onClick: () => openDraft(item) }, '改'),
+                  h(
+                    'button',
+                    { type: 'button', className: 'pl-mini is-danger', onClick: () => void act('delete', { id: item.id }), disabled: busy },
+                    '删',
+                  ),
+                ),
+              ),
+            )
+          : null,
+      )
+    }
     // ── 设置区：模型 / 模式 / 自动弹出 ────────────────────────────────────────
 
     function Settings({ lens }) {
@@ -457,6 +703,7 @@ window.__ModuleLoader__.load({
           }),
           h('span', { className: 'pl-unit' }, '步 · 一打开就自动讲这些的概要'),
         ),
+        h(PromptStudio, { lens }),
         h(
           'button',
           {
@@ -476,6 +723,9 @@ window.__ModuleLoader__.load({
               h('p', null, '· 讲这步 / 全部讲一遍：点哪个讲哪个，点一次算一次模型调用，讲到过的会标「讲完了」。'),
               h('p', null, '· 打开时自动讲：开了以后每次打开面板，自动把最近 N 步（默认 3）翻成人话概要；不想要就关掉，一打开只看原文。'),
               h('p', null, '· 自动弹出：出现新一轮就把面板摊出来（只显示原文）；关着就等你点「看过程」。'),
+              h('p', null, '· 总结风格：决定讲解员怎么说话——通俗、专业、一句话、给新手；只换说法，不换三行格式。'),
+              h('p', null, '· 提示词：「看当前提示词」能看到真正发出去的两段文本；「新建存档」可以写自己的要求并起名，之后在风格下拉里随时切回。'),
+              h('p', null, '· 省 token：开了以后只把最近 N 条压成概要再发给模型，额度省很多，代价是细节没那么全。'),
               chosen ? h('p', null, `· 现在用的是：${chosen.provider.name} / ${chosen.name}`) : null,
             )
           : null,
@@ -930,6 +1180,20 @@ window.__ModuleLoader__.load({
 .pl-switch input:checked + .pl-switch-box::after { transform: translateX(13px); }
 .pl-switch-text { font-size: 11.5px; opacity: .65; }
 .pl-more { align-self: flex-start; border: 0; background: transparent; color: var(--dsw-alias-brand-primary, #4f7cff); font: inherit; font-size: 11.5px; cursor: pointer; padding: 0; }
+.pl-studio { display: flex; flex-direction: column; gap: 6px; padding-top: 2px; }
+.pl-pre-wrap { display: flex; flex-direction: column; gap: 6px; padding: 8px 9px; border-radius: 10px; border: 1px solid rgba(127,127,127,.25); background: rgba(127,127,127,.06); }
+.pl-pre-head { font-size: 11.5px; opacity: .68; }
+.pl-pre-label { font-size: 11px; opacity: .55; }
+.pl-pre { margin: 0; padding: 6px 8px; border-radius: 8px; background: rgba(127,127,127,.10); font-family: ui-monospace, Consolas, 'Courier New', monospace; font-size: 11.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow: auto; }
+.pl-draft { display: flex; flex-direction: column; gap: 6px; }
+.pl-input { font: inherit; font-size: 12.5px; padding: 5px 8px; border-radius: 8px; border: 1px solid rgba(127,127,127,.32); background: transparent; color: inherit; }
+.pl-area { font: inherit; font-size: 12px; line-height: 1.55; padding: 7px 9px; border-radius: 9px; border: 1px solid rgba(127,127,127,.32); background: transparent; color: inherit; resize: vertical; min-height: 86px; }
+.pl-draft-foot { display: flex; align-items: center; gap: 8px; }
+.pl-archive { display: flex; flex-direction: column; gap: 4px; }
+.pl-archive-row { display: flex; align-items: center; gap: 6px; }
+.pl-archive-name { flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .85; }
+.pl-mini.is-primary { background: var(--dsw-alias-brand-primary, #4f7cff); color: #fff; border-color: transparent; }
+.pl-mini.is-danger:hover { color: #e5484d; }
 .pl-hint { font-size: 11.5px; opacity: .72; display: flex; flex-direction: column; gap: 3px; }
 .pl-hint p { margin: 0; }
 .pl-body { flex: 1 1 auto; overflow: auto; padding: 4px 14px 14px; display: flex; flex-direction: column; gap: 9px; }

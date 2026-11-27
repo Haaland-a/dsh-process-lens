@@ -21,3 +21,6 @@ desktop.ini
 dist/
 .cache/
 coverage/
+
+# harness 临时 profile
+.tmp-profile/
