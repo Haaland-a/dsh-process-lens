@@ -794,10 +794,21 @@ check(
 llmOverride = null
 liveStream.close()
 
+function cardOfDraftCheck(text) {
+  // 卡片里的流式草稿用 pl-live；顺序反了就说明又撞回 .pl-draft 了
+  const live = text.indexOf("className: 'pl-live'")
+  const oldBlock = text.indexOf('.pl-draft {\n  margin-top')
+  return live > 0 && oldBlock < 0
+}
+
 // 22) 界面上确实有这两样东西
 const streamClientSrc = readFileSync(new URL('./client.js', import.meta.url), 'utf8')
 check('卡片上有「优先」按钮', streamClientSrc.includes('排到队列最前面生成') && streamClientSrc.includes('onPriority'))
-check('生成中有流式草稿块', streamClientSrc.includes('pl-draft') && streamClientSrc.includes('card.draft'))
+check('生成中有流式草稿块', streamClientSrc.includes('pl-live') && streamClientSrc.includes('card.draft'))
+check(
+  '流式草稿块没和设置页的表单撞名',
+  cardOfDraftCheck(streamClientSrc),
+)
 check('排队时显示第几位', streamClientSrc.includes('排队中…（第'))
 
 const failed = checks.filter((item) => !item.ok)

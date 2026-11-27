@@ -986,7 +986,7 @@ window.__ModuleLoader__.load({
               ),
             )
           : null,
-        card.draft && card.explain === 'running' ? h('div', { className: 'pl-draft' }, card.draft) : null,
+        card.draft && card.explain === 'running' ? h('div', { className: 'pl-live' }, card.draft) : null,
         note ? h('div', { className: 'pl-note' }, note) : null,
         h(
           'div',
@@ -1749,7 +1749,7 @@ window.__ModuleLoader__.load({
 .pl-chip { font-size: 10.5px; padding: 1px 7px; border-radius: 999px; background: rgba(127,127,127,.14); white-space: nowrap; }
 .pl-chip.is-error { background: rgba(214,69,69,.16); color: var(--dsw-alias-state-error-primary, #d64545); }
 .pl-note { margin-top: 6px; font-size: 11px; opacity: .6; font-style: italic; }
-.pl-draft {
+.pl-live {
   margin-top: 7px;
   padding: 7px 9px;
   border-radius: 8px;
