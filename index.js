@@ -1101,6 +1101,31 @@ export function apply(ctx) {
    */
   const deepHydrated = new Set()
 
+  /**
+   * 同一次工具调用被记了不止一条（现场记过 + 事后重放）时合并成一条：
+   * 保留第一条的位置，把后面拿到的结果/失败状态补上去。
+   */
+  function mergeTools(record) {
+    if (!record) return
+    for (const entry of record.steps.values()) {
+      const kept = []
+      const byKey = new Map()
+      for (const tool of entry.tools) {
+        const token = `${tool.callId || ''}|${tool.name}`
+        const first = byKey.get(token)
+        if (!first) {
+          byKey.set(token, tool)
+          kept.push(tool)
+          continue
+        }
+        if (!first.result && tool.result) first.result = tool.result
+        if (first.state === 'running' && tool.state !== 'running') first.state = tool.state
+        if (!first.error && tool.error) first.error = tool.error
+      }
+      entry.tools = kept
+    }
+  }
+
   function hydrateTurn(sessionId, turn) {
     const key = String(sessionId)
     const wanted = Number(turn)
@@ -1121,6 +1146,12 @@ export function apply(ctx) {
       events = []
     }
     if (events.length === 0) return
+    // 已经在现场记全的一轮不必再重放：重放不加信息，只会重复记账
+    const recorded = sessions.get(key)?.turns.get(wanted)
+    if (recorded && recorded.status === 'done' && recorded.steps.size > 0) {
+      deepHydrated.add(stamp)
+      return
+    }
     let from = -1
     for (let index = events.length - 1; index >= 0; index -= 1) {
       const event = events[index]
@@ -1143,6 +1174,9 @@ export function apply(ctx) {
     } finally {
       replaying = false
     }
+    // 这一轮的事件刚才已经「边发生边记过」了，重放会把同名工具再记一遍，
+    // 卡片上就会冒出「共 2 次」和一行假的「还在进行」。合并同一次调用：保结果，去重复。
+    mergeTools(sessions.get(key)?.turns.get(wanted))
     deepHydrated.add(stamp)
   }
 

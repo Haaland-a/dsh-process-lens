@@ -662,6 +662,14 @@ const qualityPrompt = String(quality.json?.user ?? '')
 check('抽句不把 profile.id 劈成两半', qualityPrompt.includes('profile.id，而上游'), qualityPrompt.slice(0, 160))
 check('样板日志行不压过「42 passed」这种结论行', qualityPrompt.includes('42 passed'), qualityPrompt.slice(0, 160))
 
+// 18) 重放/深扫不会把一次工具调用记成两次（否则卡片上会冒出「共 2 次」「还在进行」）
+await hit(`/process-lens/api/snapshot?session=${SESSION_ID}&turn=12`)
+const dedupeSnap = await hit(`/process-lens/api/snapshot?session=${SESSION_ID}&turn=12`)
+const dedupeStep = dedupeSnap.json?.data?.steps?.[0] ?? {}
+const dedupeTools = dedupeStep.tools ?? []
+check('重放不会把一次工具调用记成两次', dedupeTools.length === 1, dedupeTools.map((item) => item.callId))
+check('重放不会留下一条假的「还在进行」', dedupeTools.every((item) => item.state !== 'running'), dedupeTools.map((item) => item.state))
+
 const failed = checks.filter((item) => !item.ok)
 console.log(`\n${checks.length - failed.length}/${checks.length} 通过`)
 if (failed.length) process.exitCode = 1
