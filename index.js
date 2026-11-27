@@ -776,6 +776,9 @@ export function apply(ctx) {
       if (index === 0) score += 4
       if (index === lines.length - 1) score += 3
       if (line.length > 500) score -= 3
+      // 样板行：光是「有数字」不该压过真正的结论行
+      if (/^\[(info|debug|trace|verbose)\]/i.test(line)) score -= 2
+      if (/\(pass \d+\)|resolved in|compiling|hmr update/i.test(line)) score -= 2
       return { line, index, score }
     })
     return scored
@@ -791,7 +794,12 @@ export function apply(ctx) {
   function pickSentences(value, limit) {
     const flat = String(value ?? '').replace(/\s+/g, ' ').trim()
     if (!flat) return ''
-    const parts = (flat.match(/[^。！？；.!?;]+[。！？；.!?;]?/g) ?? [flat]).map((part) => part.trim()).filter(Boolean)
+    // 只在真正的句末断句：中文标点一律算，英文标点必须后面跟空白/结尾，
+    // 否则 profile.id、v1.2.3、e.g. 这类都会被劈成两半，读起来像话说到一半。
+    const parts = flat
+      .split(/(?<=[。！？；])|(?<=[.!?;])(?=\s)/)
+      .map((part) => part.trim())
+      .filter(Boolean)
     if (parts.length <= limit) return clip(parts.join(''), 240)
     const picked = []
     for (const part of parts) {

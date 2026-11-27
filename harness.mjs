@@ -627,6 +627,41 @@ check('Host 认 replay 和一次性预设',
   null,
 )
 
+// 17) 省 token 的抽句/挑行质量：别把 profile.id 劈开，也别让样板行压过结论行
+await hit('/process-lens/api/config', 'POST', { compact: true })
+const QUALITY_THINK =
+  '先看日志，大部分行都是样板。问题是 handler 里直接取了 profile.id，而上游可能返回 undefined，所以要先加空值判断。结论是：先修空值，再跑一遍测试。'
+const QUALITY_NOISE = Array.from(
+  { length: 10 },
+  (_, n) => `[info] 21:0${n}:00 reading E:/logs/very-long-project-name/src/a/b/user-profile-handler.ts (pass ${n + 1})`,
+).join('\n')
+pushEvent({ type: 'turn/start', time: 99000, data: { turn: 12 } })
+pushEvent({ type: 'step/start', time: 99010, data: { turn: 12, step: 1 } })
+pushEvent({
+  type: 'tool/call',
+  time: 99011,
+  data: { turn: 12, step: 1, callId: 'q1', name: 'bash', arguments: '{"command":"npm test"}' },
+})
+pushEvent({
+  type: 'tool/result',
+  time: 99012,
+  data: {
+    turn: 12,
+    step: 1,
+    message: { toolCallId: 'q1', content: [{ type: 'text', text: `${QUALITY_NOISE}\ntests: 42 passed, 0 failed` }] },
+  },
+})
+pushEvent({
+  type: 'assistant/message',
+  time: 99013,
+  data: { turn: 12, step: 1, text: '第 1 步完了。', stream: [{ type: 'reasoning-chunks', texts: [QUALITY_THINK] }] },
+})
+pushEvent({ type: 'step/end', time: 99014, data: { turn: 12, step: 1 } })
+const quality = await hit(`/process-lens/api/prompt?session=${SESSION_ID}`)
+const qualityPrompt = String(quality.json?.user ?? '')
+check('抽句不把 profile.id 劈成两半', qualityPrompt.includes('profile.id，而上游'), qualityPrompt.slice(0, 160))
+check('样板日志行不压过「42 passed」这种结论行', qualityPrompt.includes('42 passed'), qualityPrompt.slice(0, 160))
+
 const failed = checks.filter((item) => !item.ok)
 console.log(`\n${checks.length - failed.length}/${checks.length} 通过`)
 if (failed.length) process.exitCode = 1

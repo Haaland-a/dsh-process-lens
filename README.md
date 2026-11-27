@@ -1,9 +1,9 @@
 # 过程讲解器（dsh-process-lens）
 
 [![DSH plugin](https://img.shields.io/badge/DSH-plugin-4f7cff)](https://github.com/Haaland-a/dsh-process-lens)
-[![version](https://img.shields.io/badge/version-0.3.1-2ea043)](./package.json)
+[![version](https://img.shields.io/badge/version-0.3.2-2ea043)](./package.json)
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
-[![self test](https://img.shields.io/badge/self--test-91%2F91-2ea043)](./harness.mjs)
+[![self test](https://img.shields.io/badge/self--test-93%2F93-2ea043)](./harness.mjs)
 
 把 AI 干活的每一步摊开给你看：**原文点一下就看全文**（不花额度），**人话解说按需生成**（点哪步才讲哪步），**用哪个模型讲由你单独挑**。
 
@@ -190,6 +190,54 @@
 
 实现上只有两处改动：客户端 `POST /explain` 多带 `{ replay: true, preset }`；Host 用 `personaOf(preset)` 解析
 `s::<内置风格>` / `p::<存档 id>`，再走 `systemPromptWith(job.preset)` 拼这一次的 system——不写回设置文件。
+
+### 4.12 省 token 到底怎么省：一次实测（新）
+
+一句话：**它不改你说话，只改「发多少字给模型」**。开与关都是同一次调用、同三行输出，区别只在这一份提示词有多长。
+
+拿一段真实味的材料在本机跑了一遍（12 步：反复读同一个日志、跑两次构建、改三处、再跑测试；每一步都带一段很长的内部思考）：
+
+| 步骤 | 关（原文） | 开（精炼） | 实际用的是 | 省了 |
+| --- | --- | --- | --- | --- |
+| 1 | 1031 字 | 525 字 | 精炼版 | 49% |
+| 2 | 948 | 602 | 精炼版 | 36% |
+| 3 | 893 | 681 | 精炼版 | 24% |
+| 5 | 948 | 817 | 精炼版 | 14% |
+| 8 | 893 | 720 | 精炼版 | 19% |
+| 12 | 890 | 843 | 精炼版 | 5% |
+| **合计 12 次调用** | **11240 字** | **8938 字** | 12 次调用一次没少 | **20%** |
+
+**为什么前面省得多、后面省得少**：精炼版会把「最近 N 步」压成一行骨架（默认 5 行），这个骨架差不多是固定成本；轮次越往后，这 5 行占的比例越高，所以第 1 步能省一半，第 12 步只剩 5%。**调用次数始终没变**——想少调用，用上面的「省 token++」。
+
+同一件事，两份提示词的差别长这样：
+
+```text
+【关】这是这一轮里的第 12 步。
+助手在这一步的内部思考（节选）：先看第 12 步到底改了什么。我先把这段日志从头过一遍……（整段 400 多字）
+这一步调用过的操作：
+- 跑命令（npm test） → 返回：[info] 21:01:00 reading E:/…/user-profile-handler.ts (pass 1) [info] …
+
+【开】这是这一轮的第 12 步。省 token 模式：最近 5 步已精炼成骨架……
+- 第8步 跑命令：command=npm run build → error: #1:12 deprecated import / done
+- 第11步 跑命令：command=npm run build → build ok: 0 error, 0 warning / done
+- 第12步★ 跑命令：command=npm test → tests: 42 passed, 0 failed / done
+  它在想：问题是 handler 里直接取了 profile.id，而上游可能返回 undefined，所以要先加空值判断。
+图例：#1=E:/Personal/Desktop/proj/src/server/handlers/user-profile-handler.ts
+```
+
+读得出来四件事：
+
+1. **长路径折成 `#1`**，图例只在最后写一次——同一段路径出现 10 次也只占 4 个字符。
+2. **样板行被丢掉**，只留「有信息」的两行（报错 / 结论），并且按原顺序还原，不会前后颠倒。
+3. **思考只抽带结论味的那一句**（「问题是…所以…」），不把整段独白搬过去。
+4. **连着几步干同一件事只写一行**，写成「第 5~7 步（同样的事做了 3 次）」。
+
+**两个质量修正（本次一起改了）**：
+
+- 抽句以前把英文句号也当句末，`profile.id` 会被劈成「……profile.」+`id，而上游……`，读起来像话说到一半。现在只在**真句末**断句，中文标点一律算，英文标点必须后面跟空格或结尾。
+- 挑行以前「有数字」就加分，于是 `[info] 21:00:00 reading …(pass 1)` 这类样板行会挤掉 `tests: 42 passed, 0 failed` 这样的结论行。现在样板行先扣两分。
+
+**怎么自己验**：面板 →「提示词」页签，右上角就写着「现在这份 XXXX 字 / 不省 token 要 YYYY 字」。想对比就把「省 token（精炼）」关掉再看一眼，数字是现算的。
 
 ### 5. 讲解风格 / 自己的提示词 / 两档省 token
 
@@ -382,7 +430,7 @@ dsh plugin add link:E:/Personal/Desktop/dsh/dsh-process-lens --profile desktop
 node harness.mjs
 ```
 
-用假 ctx 跑 **91 条**断言：历史补账、messageId→轮次定位、工具人话标签、原文（含参数/返回）随卡返回、失败标红、
+用假 ctx 跑 **93 条**断言：历史补账、messageId→轮次定位、工具人话标签、原文（含参数/返回）随卡返回、失败标红、
 
 以及 6 条前端静态断言（新步骤不挤掉正在读的卡、钉住时不拽滚动条、往上翻/展开原文会钉住、有「回到最新」、换轮恢复跟随）、
 「只连流不点 = 0 次模型调用」、显式点讲才 1 次且用插件自己选的模型、讲失败会标 `failed` 并推流、
