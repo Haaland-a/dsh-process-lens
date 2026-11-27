@@ -38,7 +38,9 @@ window.__ModuleLoader__.load({
         allSteps: false,
         autoSummarize: false,
         autoSummarizeCount: 3,
-  liveExplain: false,
+        liveExplain: false,
+        batchEvery: 0,
+        batchBackground: false,
         style: 'plain',
         activePrompt: '',
         prompts: [],
@@ -217,6 +219,7 @@ window.__ModuleLoader__.load({
     function explainStateText(card) {
       if (card.explain === 'queued') return '排队中，马上就讲…'
       if (card.explain === 'running') return '正在翻译成人话…'
+      if (card.explain === 'batched') return card.batchTo ? `已并进第 ${card.batchTo} 步的总结` : '已并进批量总结'
       if (card.explain === 'failed') return card.explainError || '这次没翻译出来，可以再点一次'
       return ''
     }
@@ -449,7 +452,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'pl-row' },
-          h('span', { className: 'pl-key' }, '省 token'),
+          h('span', { className: 'pl-key' }, '省 token（精炼）'),
           h(
             'label',
             { className: 'pl-switch', title: '开了：把最近 N 步压成骨架再发（本地规则，不调模型、不花额度）；关着：给尽量完整的原文' },
@@ -615,6 +618,10 @@ window.__ModuleLoader__.load({
           : null
       const recentValue = Number.isFinite(Number(lens.config.recent)) ? Number(lens.config.recent) : 8
       const autoCountValue = Number.isFinite(Number(lens.config.autoSummarizeCount)) ? Number(lens.config.autoSummarizeCount) : 3
+      const batchValue = Math.min(50, Math.max(2, Math.round(Number(lens.config.batchEvery) || 5)))
+      const batchOn = Number(lens.config.batchEvery) >= 2
+      // 批量要「攒够再一次」，这两个是「一步一讲」，同时开等于白省
+      const batchClash = batchOn && (lens.config.autoSummarize === true || lens.config.liveExplain === true)
 
       return h(
         'div',
@@ -736,6 +743,88 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'pl-row' },
+          h('span', { className: 'pl-key' }, '省 token++'),
+          h(
+            'label',
+            {
+              className: 'pl-switch',
+              title: '开了：平时不吭声，每攒够 N 步才找一次模型，一次把这 N 步合起来讲',
+            },
+            h('input', {
+              type: 'checkbox',
+              checked: batchOn,
+              onChange: (event) => void saveConfig({ batchEvery: event.target.checked ? batchValue : 0 }),
+            }),
+            h('span', { className: 'pl-switch-box' }),
+            h('span', { className: 'pl-switch-text' }, batchOn ? `每 ${batchValue} 步` : '关'),
+          ),
+          h('input', {
+            type: 'number',
+            className: 'pl-num',
+            min: 2,
+            max: 50,
+            step: 1,
+            defaultValue: batchValue,
+            disabled: !batchOn,
+            onBlur: (event) => {
+              const next = Math.min(50, Math.max(2, Math.round(Number(event.target.value) || 5)))
+              event.target.value = String(next)
+              void saveConfig({ batchEvery: next })
+            },
+            onKeyDown: (event) => {
+              if (event.key === 'Enter') event.target.blur()
+            },
+            title: '每攒够这么多步找一次模型（2~50）',
+          }),
+          h('span', { className: 'pl-unit' }, '步一讲'),
+          h(Note, {
+            text: '不是少写字，是少找模型：每攒够 N 步才调用一次，一次把这几步合起来讲。10 步只要 2 次调用。',
+            recommend: '推荐 5',
+          }),
+        ),
+        h(
+          'div',
+          { className: 'pl-row' },
+          h('span', { className: 'pl-key' }, '后台跑'),
+          h(
+            'label',
+            {
+              className: 'pl-switch',
+              title: '关着：面板没打开就完全不跑，一分额度不花；开着：面板关着也照样每 N 步讲一次',
+            },
+            h('input', {
+              type: 'checkbox',
+              checked: lens.config.batchBackground === true,
+              onChange: (event) => void saveConfig({ batchBackground: event.target.checked }),
+            }),
+            h('span', { className: 'pl-switch-box' }),
+            h('span', { className: 'pl-switch-text' }, lens.config.batchBackground ? '开' : '关'),
+          ),
+          h(Note, {
+            text: '关着：面板没开就不跑，一分不花；开着：面板关着它也会按 N 步攒着讲。',
+            recommend: false,
+          }),
+        ),
+        batchClash
+          ? h(
+              'div',
+              { className: 'pl-warn' },
+              h('span', null, '和省 token++ 冲突：'),
+              h('span', null, '「打开时自动讲」「开着就自动讲」会一步一步单讲，把批量省下来的额度又花回去。'),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'pl-warn-btn',
+                  onClick: () => void saveConfig({ autoSummarize: false, liveExplain: false }),
+                },
+                '把这两个关掉',
+              ),
+            )
+          : null,
+        h(
+          'div',
+          { className: 'pl-row' },
           h('span', { className: 'pl-key' }, '打开时自动讲'),
           h(
             'label',
@@ -810,12 +899,15 @@ window.__ModuleLoader__.load({
               h('p', null, '· 打开时显示 N 步：面板一进来先摆最近 N 步（默认 8），上面有按钮「展开这一轮全部」，不会漏步也不至于一屏刷不完。'),
               h('p', null, '· 读的时候不会被打断：你往上翻、或者点开「展开原文」，面板就把当前这几步钉住，新步骤只在下面排队，点「回到最新」才跟过去。'),
               h('p', null, '· 讲这步 / 全部讲一遍：点哪个讲哪个，点一次算一次模型调用，讲到过的会标「讲完了」。'),
+              h('p', null, '· 省 token++：这才是「每 N 步发一次」。开着以后平时不吭声，每攒够 N 步才找一次模型，一次把这 N 步合起来讲；10 步只花 2 次调用，比一步一步单讲省得多。'),
+              h('p', null, '· 后台跑：省 token++ 的附带选项。关着 = 只有面板打开时才跑（一关面板就停，一分不花）；开着 = 面板关着它也照常按 N 步攒着讲。'),
+              h('p', null, '· 和省 token++ 冲突：省 token++ 要「攒够再一次」，而「打开时自动讲」「开着就自动讲」是「一步一讲」，两个一起开等于白省，所以开着批量时它会提示你把那两个关掉。'),
               h('p', null, '· 打开时自动讲：开了以后每次打开面板，自动把最近 N 步（默认 3）翻成人话概要；不想要就关掉，一打开只看原文。'),
               h('p', null, '· 开着就自动讲：面板停在过程页时，来一步就自动讲一步，不用点；关掉面板或切到设置页立刻停，之前的老步骤不会被翻出来重讲。'),
               h('p', null, '· 自动弹出（默认关、也建议关）：开了会自己弹面板打断你；关着就等你点「看过程」。'),
               h('p', null, '· 总结风格：决定讲解员怎么说话——通俗、专业、一句话、给新手；只换说法，不换三行格式。'),
               h('p', null, '· 提示词：「看当前提示词」能看到真正发出去的两段文本；「新建存档」可以写自己的要求并起名，之后在风格下拉里随时切回。'),
-              h('p', null, '· 省 token：开了以后，最近 N 步先在你本机精炼成骨架（同一件事合并、长路径折成 #1）再发给模型，额度省很多，全程不调模型、不花额度。'),
+              h('p', null, '· 省 token（精炼）：开了以后，最近 N 步先在你本机精炼成骨架（同一件事合并、长路径折成 #1）再发给模型，额度省很多，全程不调模型、不花额度。'),
               chosen ? h('p', null, `· 现在用的是：${chosen.provider.name} / ${chosen.name}`) : null,
             )
           : null,
@@ -917,6 +1009,7 @@ window.__ModuleLoader__.load({
           { className: 'pl-card-head' },
           h('span', { className: 'pl-step-no' }, `第 ${card.step} 步`),
           h('span', { className: 'pl-card-title' }, card.title),
+          card.batchRange ? h('span', { className: 'pl-batchtag' }, `第 ${card.batchRange[0]}~${card.batchRange[1]} 步合并`) : null,
           pending ? h('span', { className: 'pl-spinner', 'aria-hidden': true }) : null,
         ),
         // 原文在上：不花额度也能看清这一步到底做了什么
@@ -966,7 +1059,7 @@ window.__ModuleLoader__.load({
               disabled: busy || done,
               title: done ? '这一步已经讲过了' : '只讲这一步（点一次 = 一次模型调用）',
             },
-            busy ? '正在讲…' : done ? '讲完了' : card.explain === 'failed' ? '再讲一次' : '讲这步',
+            busy ? '正在讲…' : done ? '讲完了' : card.explain === 'failed' ? '再讲一次' : card.explain === 'batched' ? '单独讲这步' : '讲这步',
           ),
         ),
       )
@@ -1123,6 +1216,8 @@ window.__ModuleLoader__.load({
           return
         }
         if (!lens.sessionId || lens.turn === null || lens.turn === undefined) return
+        // 省 token++ 开着时走批量，这里不再一步一步单讲（否则重复花额度）
+        if (Number(lens.config.batchEvery) >= 2) return
         if (lens.config.autoSummarize !== true) return
         const snapshot = lens.snapshotKey === `${lens.sessionId}:${lens.turn}` ? lens.snapshot : null
         const cards = snapshot?.steps ?? []
@@ -1137,12 +1232,12 @@ window.__ModuleLoader__.load({
         if (targets.length === 0) return
         autoDoneRef.current = key
         void explainSteps(lens.sessionId, lens.turn, targets)
-      }, [lens.open, lens.sessionId, lens.turn, lens.snapshot, lens.snapshotKey, lens.config.autoSummarize, lens.config.autoSummarizeCount])
+      }, [lens.open, lens.sessionId, lens.turn, lens.snapshot, lens.snapshotKey, lens.config.autoSummarize, lens.config.autoSummarizeCount, lens.config.batchEvery])
 
       // 「开着就自动讲」：面板开着 + 停在过程页时，新出现的步骤自动开始讲。
       // 关掉面板 / 切到设置页 / 开关没开 → 一分额度都不花；刚打开时只记基线，不补讲历史。
       useEffect(() => {
-        if (!lens.open || lens.tab === 'settings' || lens.config.liveExplain !== true) {
+        if (Number(lens.config.batchEvery) >= 2 || !lens.open || lens.tab === 'settings' || lens.config.liveExplain !== true) {
           liveSeenRef.current = null
           return
         }
@@ -1176,6 +1271,7 @@ window.__ModuleLoader__.load({
         lens.snapshot,
         lens.snapshotKey,
         lens.config.liveExplain,
+        lens.config.batchEvery,
       ])
 
       const turnKey = `${state.sessionId ?? ''}:${state.turn ?? ''}`
@@ -1334,7 +1430,9 @@ window.__ModuleLoader__.load({
             h(
               'span',
               { className: 'pl-bar-text' },
-              lens.config.liveExplain === true && lens.tab !== 'settings'
+              Number(lens.config.batchEvery) >= 2
+                ? `已开「省 token++」：每 ${Math.min(50, Math.max(2, Math.round(Number(lens.config.batchEvery) || 5)))} 步合起来讲一次（一次调用讲好几步）`
+                : lens.config.liveExplain === true && lens.tab !== 'settings'
                 ? '已开「开着就自动讲」：面板开着的时候来一步讲一步（花额度），关掉面板就停'
                 : lens.config.autoSummarize === true
                   ? `已开「打开时自动讲最近 ${Math.min(20, Math.max(1, Math.round(Number(lens.config.autoSummarizeCount) || 3)))} 步」：每次打开面板都会自动生成这些概要（花额度）`
@@ -1575,6 +1673,10 @@ window.__ModuleLoader__.load({
 .pl-unit { font-size: 11px; opacity: .6; }
 .pl-rec { flex: none; margin-left: 2px; padding: 0 6px; border-radius: 999px; font-size: 10px; line-height: 16px; background: rgba(64,160,110,.16); color: #2f8a5b; cursor: help; }
 .pl-rec.is-off { background: rgba(120,130,150,.16); color: #6b7280; }
+.pl-warn { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 2px 0 4px; padding: 7px 9px; border-radius: 9px; font-size: 11.5px; line-height: 1.5; color: #92400e; background: rgba(245,158,11,.13); border: 1px solid rgba(245,158,11,.35); }
+.pl-warn-btn { font: inherit; font-size: 11px; color: #92400e; background: rgba(255,255,255,.6); border: 1px solid rgba(245,158,11,.5); border-radius: 7px; padding: 2px 8px; cursor: pointer; }
+.pl-warn-btn:hover { background: rgba(255,255,255,.9); }
+.pl-batchtag { flex: none; margin-left: 4px; padding: 0 6px; border-radius: 999px; font-size: 10px; line-height: 16px; color: #1d4ed8; background: rgba(37,99,235,.12); }
 .pl-more-steps { align-self: stretch; font: inherit; font-size: 11.5px; padding: 6px 10px; border-radius: 9px; border: 1px dashed rgba(127,127,127,.34); background: transparent; color: inherit; opacity: .75; cursor: pointer; }
 .pl-more-steps:hover { background: rgba(127,127,127,.1); opacity: 1; }
 .pl-frozen { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 8px; margin-bottom: 8px; padding: 5px 9px; border-radius: 9px; border: 1px solid rgba(214,150,50,.34); background: color-mix(in srgb, var(--pl-skin, Canvas) 88%, rgba(214,150,50,.16)); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }

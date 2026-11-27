@@ -53,6 +53,10 @@ const DEFAULTS = Object.freeze({
   autoSummarizeCount: 3,
   /** 面板停在过程页时，每出现新的一步就自动讲（花额度，默认关） */
   liveExplain: false,
+  /** 省 token++：每 N 步只调一次模型，一次把这 N 步一起总结（0/1 = 关） */
+  batchEvery: 0,
+  /** 批量总结也允许面板没开时后台跑；false = 只在面板开着时跑 */
+  batchBackground: false,
   /** 过程页默认就把这一轮所有步骤摆出来（false = 只摆最近 N 步） */
   allSteps: false,
   /** 内置讲解风格：plain / pro / brief / gentle */
@@ -472,6 +476,10 @@ export function apply(ctx) {
       result: step.card?.result ?? '',
       explain: step.explain,
       explainError: step.error,
+      /** 省 token++ 合并：这一步并进了第几号卡的总结 */
+      batchTo: step.batchTo ?? null,
+      /** 这一张卡是第几号到第几号的合并总结 */
+      batchRange: step.batchRange ?? null,
       /** 上一次讲解实际发出去多少字（省 token 模式下能直接看出效果） */
       chars: Number(step.promptChars) || 0,
       tools: toolsView(step),
@@ -536,6 +544,8 @@ export function apply(ctx) {
       autoSummarize: settings.autoSummarize === true,
       autoSummarizeCount: settings.autoSummarizeCount,
       liveExplain: settings.liveExplain === true,
+      batchEvery: Math.min(50, Math.max(0, Math.round(Number(settings.batchEvery) || 0))),
+      batchBackground: settings.batchBackground === true,
       ...styleView(),
       styles: stylesView(),
       prompts: promptList(),
@@ -882,6 +892,72 @@ export function apply(ctx) {
     void drain()
   }
 
+  /** 每 N 步批量讲一次的那个 N；0/1 表示关 */
+  function batchEveryOf() {
+    return Math.min(50, Math.max(0, Math.round(Number(settings.batchEvery) || 0)))
+  }
+
+  /**
+   * 省 token++：每隔 N 步只调一次模型，一次把这 N 步一起总结。
+   * 省下来的不是提示词长度，而是「调用次数」——10 步只花 2 次模型调用。
+   * 返回 true 表示这一批已经排进队列。
+   */
+  function maybeBatch(sessionId, turn, upto) {
+    if (replaying || disposed) return false
+    const every = batchEveryOf()
+    if (every < 2) return false
+    // 默认只在面板开着时跑：没人看就不花额度；开了「后台跑」才不管有没有人看
+    if (settings.batchBackground !== true && viewers === 0) return false
+    const record = sessions.get(String(sessionId))?.turns.get(turn)
+    if (!record) return false
+    const done = [...record.steps.values()]
+      .filter((entry) => entry.status === 'done')
+      .sort((a, b) => a.step - b.step)
+    if (done.length < 1) return false
+    // 一轮结束时（upto 没传）把剩下的顺手讲掉；平时必须攒够 N 步才动
+    const flush = upto === undefined || upto === null
+    const from = Math.max(1, (Number(record.batchedTo) || 0) + 1)
+    const lastStep = done[done.length - 1].step
+    const last = Number.isFinite(Number(upto)) ? Math.min(Number(upto), lastStep) : lastStep
+    const list = done.filter((entry) => entry.step >= from && entry.step <= last)
+    if (list.length < (flush ? 1 : every)) return false
+    const target = list[list.length - 1]
+    if (target.explain === 'done' || target.explain === 'running' || target.explain === 'queued') return false
+    const key = `${String(sessionId)}:${turn}:batch:${target.step}`
+    if (inflight.has(key) || queue.some((job) => job.key === key)) return false
+    record.batchedTo = target.step
+    for (const entry of list.slice(0, -1)) {
+      if (entry.explain === 'done' || entry.explain === 'running' || entry.explain === 'queued') continue
+      entry.explain = 'batched'
+      entry.batchTo = target.step
+      pushCard(sessionId, turn, entry.step)
+    }
+    target.explain = 'queued'
+    target.batchRange = [list[0].step, target.step]
+    pushCard(sessionId, turn, target.step)
+    queue.push({
+      key,
+      sessionId: String(sessionId),
+      turn,
+      step: target.step,
+      kind: 'batch',
+      from: list[0].step,
+      to: target.step,
+    })
+    void drain()
+    return true
+  }
+
+  /** 批量总结的提示词：复用本地精炼骨架，只多一句「合起来讲」 */
+  function buildBatchPrompt(record, entry, from, to) {
+    const body = buildPromptCompact(record, entry)
+    return [
+      `省 token++：第 ${from}~${to} 步一共 ${to - from + 1} 步，请把这几步合起来总结一次，不要逐条复述。`,
+      body,
+      '三行格式照旧，但讲的是这几步整体：第一行说这几步合起来在干什么；第二行说一起做的关键动作；第三行说合起来的结果。',
+    ].join('\n')
+  }
+
   async function drain() {
     while (!disposed && running < MAX_PARALLEL && queue.length > 0) {
       const job = queue.shift()
@@ -905,17 +981,27 @@ export function apply(ctx) {
     try {
       const route = resolveRoute(job.sessionId)
       if (!route) throw new Error('还没选好讲解模型，请在抽屉顶部挑一个')
-      const promptText = buildPrompt(record, entry)
+      const promptText = job.kind === 'batch' ? buildBatchPrompt(record, entry, job.from, job.to) : buildPrompt(record, entry)
       entry.promptChars = promptText.length
       const text = await callOnce(route, promptText, systemPromptNow())
       if (!text) throw new Error('模型这次没有返回内容')
       const card = parseCard(text)
       entry.card = card
+      if (job.kind === 'batch') entry.batchRange = [job.from, job.to]
       entry.error = null
       entry.explain = 'done'
     } catch (error) {
       entry.error = oneLine(error?.message ?? error, 160)
       entry.explain = 'failed'
+      if (job.kind === 'batch') {
+        // 这一批没讲成：把合并标记退回单步，用户点单步照样能讲
+        for (const one of record.steps.values()) {
+          if (one.batchTo !== job.step) continue
+          one.explain = 'idle'
+          one.batchTo = null
+          pushCard(job.sessionId, job.turn, one.step)
+        }
+      }
       log(`讲解失败：${entry.error}`)
     } finally {
       if (!disposed) pushCard(job.sessionId, job.turn, job.step)
@@ -1095,7 +1181,9 @@ export function apply(ctx) {
         entry.status = 'done'
         entry.endedAt = event.time ?? Date.now()
         pushCard(sessionId, data.turn, data.step)
-        enqueue(sessionId, data.turn, data.step, false)
+        // 批量开着时只走批量，避免每步单讲把额度又花一遍
+        if (batchEveryOf() < 2) enqueue(sessionId, data.turn, data.step, false)
+        maybeBatch(sessionId, data.turn, data.step)
         return
       }
       if (type === 'turn/end') {
@@ -1103,13 +1191,15 @@ export function apply(ctx) {
         record.status = 'done'
         record.reason = data.reason?.kind ?? null
         record.endedAt = event.time ?? Date.now()
+        const batchOn = batchEveryOf() >= 2
         for (const entry of record.steps.values()) {
           if (entry.status === 'running') {
             entry.status = 'done'
             entry.endedAt = entry.endedAt ?? Date.now()
           }
-          enqueue(sessionId, data.turn, entry.step, false)
+          if (!batchOn) enqueue(sessionId, data.turn, entry.step, false)
         }
+        maybeBatch(sessionId, data.turn)
         pushTurn(sessionId, data.turn)
       }
     } catch (error) {
@@ -1229,6 +1319,9 @@ export function apply(ctx) {
         if (Number.isFinite(Number(body.recent))) settings.recent = Math.min(100, Math.max(0, Math.round(Number(body.recent))))
         if (typeof body.autoSummarize === 'boolean') settings.autoSummarize = body.autoSummarize
         if (typeof body.liveExplain === 'boolean') settings.liveExplain = body.liveExplain
+        if (Number.isFinite(Number(body.batchEvery)))
+          settings.batchEvery = Math.min(50, Math.max(0, Math.round(Number(body.batchEvery))))
+        if (typeof body.batchBackground === 'boolean') settings.batchBackground = body.batchBackground
         if (Number.isFinite(Number(body.autoSummarizeCount)))
           settings.autoSummarizeCount = Math.min(20, Math.max(1, Math.round(Number(body.autoSummarizeCount))))
         if (STYLE_PRESETS[body.style]) settings.style = body.style
@@ -1382,6 +1475,9 @@ export function apply(ctx) {
     }
   }
 
+  /** 现在有几个面板真的连着（决定「只在打开时跑」要不要开工） */
+  let viewers = 0
+
   function streamHandler(req, res) {
     if (blocked(req)) {
       writeJson(res, 403, { ok: false, error: 'forbidden' })
@@ -1417,6 +1513,7 @@ export function apply(ctx) {
       subscribers.set(key, set)
     }
     set.add(client)
+    viewers += 1
     send('snap', snapshotOf(sessionId, turn))
     // 连上只是"看"。要讲哪一步，用户点按钮显式请求——所以这里只标注状态，不排队。
     const record = sessions.get(sessionId)?.turns.get(turn)
@@ -1432,6 +1529,7 @@ export function apply(ctx) {
       closed = true
       clearInterval(heartbeat)
       set.delete(client)
+      viewers = Math.max(0, viewers - 1)
       if (set.size === 0) subscribers.delete(key)
       try {
         res.end()

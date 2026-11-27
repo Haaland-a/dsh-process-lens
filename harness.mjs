@@ -474,11 +474,123 @@ check(
   '基线只记做完的步 + 每次最多 2 步',
 )
 check(
+  '「省 token++」是「每 N 步发一次」，客户端有开关和步数',
+  clientSrc.includes('省 token++') && clientSrc.includes('saveConfig({ batchEvery:') && clientSrc.includes('后台跑'),
+  '设置行',
+)
+check(
+  '批量开着时不一步一步单讲，两个自动讲解都短路',
+  clientSrc.includes('if (Number(lens.config.batchEvery) >= 2) return') &&
+    clientSrc.includes('Number(lens.config.batchEvery) >= 2 || !lens.open'),
+  '两个 effect 的闸门',
+)
+check(
+  '和「打开时自动讲 / 开着就自动讲」冲突会当场提示',
+  clientSrc.includes('const batchClash = batchOn &&') && clientSrc.includes('pl-warn') && clientSrc.includes('把这两个关掉'),
+  '冲突提示 + 一键关掉',
+)
+check(
+  '被合并的步会写清楚「并进第 k 步」',
+  clientSrc.includes('已并进第 ${card.batchTo} 步的总结') && clientSrc.includes('单独讲这步'),
+  '合并标记有文案，也还能单独讲',
+)
+check(
+   'Host：批量只调一次模型，并记住批到第几步',
+  hostSrc.includes('batchEvery: 0,') &&
+    hostSrc.includes('function maybeBatch') &&
+    hostSrc.includes('record.batchedTo = target.step') &&
+    hostSrc.includes("entry.explain = 'batched'") &&
+    hostSrc.includes('kind: \'batch\''),
+  'maybeBatch + 合并标记',
+)
+check(
+  'Host：后台跑关着时没人看就不开工',
+  hostSrc.includes('settings.batchBackground !== true && viewers === 0') &&
+    hostSrc.includes('viewers += 1') &&
+    hostSrc.includes('viewers = Math.max(0, viewers - 1)'),
+  'viewers 计数 + 闸门',
+)
+check(
+  'Host：一轮结束时把剩下的顺手讲掉',
+  hostSrc.includes('const flush = upto === undefined || upto === null'),
+  'turn/end 补最后一批',
+)
+check(
   '换一轮会重新跟随最新',
   clientSrc.includes('}, [lens.sessionId, lens.turn])'),
   'reset',
 )
 
+// 14) 省 token++：攒够 N 步才找一次模型，一次讲好几步
+await hit('/process-lens/api/config', 'POST', {
+  batchEvery: 3,
+  batchBackground: true,
+  autoSummarize: false,
+  liveExplain: false,
+})
+const batchCfg = await hit('/process-lens/api/config')
+check(
+  '「省 token++」步数和后台跑都存得住',
+  batchCfg.json?.settings?.batchEvery === 3 && batchCfg.json?.settings?.batchBackground === true,
+  batchCfg.json?.settings,
+)
+await hit('/process-lens/api/config', 'POST', { batchEvery: 999 })
+const batchClamp = await hit('/process-lens/api/config')
+check('批量步数上限 50', batchClamp.json?.settings?.batchEvery === 50, batchClamp.json?.settings?.batchEvery)
+await hit('/process-lens/api/config', 'POST', { batchEvery: 3 })
+
+const pushEvent = (event) => listeners.get('session/event')?.({ id: SESSION_ID }, event)
+function playTurn(turn, steps) {
+  pushEvent({ type: 'turn/start', time: turn * 10000, data: { turn } })
+  for (let index = 1; index <= steps; index += 1) {
+    pushEvent({ type: 'step/start', time: turn * 10000 + index * 10, data: { turn, step: index } })
+    pushEvent({
+      type: 'tool/call',
+      time: turn * 10000 + index * 10 + 1,
+      data: { turn, step: index, callId: `t${turn}-${index}`, name: 'read', arguments: '{"file_path":"E:/logs/x.log"}' },
+    })
+    pushEvent({
+      type: 'tool/result',
+      time: turn * 10000 + index * 10 + 2,
+      data: {
+        turn,
+        step: index,
+        message: { toolCallId: `t${turn}-${index}`, content: [{ type: 'text', text: `第 ${index} 步读完了` }] },
+      },
+    })
+    pushEvent({ type: 'step/end', time: turn * 10000 + index * 10 + 3, data: { turn, step: index } })
+  }
+}
+
+const callsBeforeBatch = llmCalls.length
+playTurn(9, 3)
+await new Promise((resolve) => setTimeout(resolve, 350))
+check('三步只找一次模型，不是三步三次', llmCalls.length === callsBeforeBatch + 1, {
+  calls: llmCalls.length - callsBeforeBatch,
+})
+const batchPrompt = JSON.stringify(llmCalls[llmCalls.length - 1] ?? {})
+check(
+  '批量提示词要求「合起来讲一次」',
+  batchPrompt.includes('省 token++') && batchPrompt.includes('第 1~3 步'),
+  batchPrompt.slice(0, 60),
+)
+const batchSnap = await hit(`/process-lens/api/snapshot?session=${SESSION_ID}&turn=9`)
+const batchSteps = batchSnap.json?.data?.steps ?? []
+check(
+  '这一批没讲成就把合并标记退回单步，不留半截',
+  batchSteps[2]?.explain === 'failed' && batchSteps[0]?.explain === 'idle',
+  batchSteps.map((item) => item.explain),
+)
+
+// 15) 后台跑关着 + 没人看 → 攒着也不花额度
+await hit('/process-lens/api/config', 'POST', { batchEvery: 2, batchBackground: false })
+const callsQuiet = llmCalls.length
+playTurn(10, 4)
+await new Promise((resolve) => setTimeout(resolve, 300))
+check('没人看又没开后台跑：一步都不调', llmCalls.length === callsQuiet, {
+  calls: llmCalls.length - callsQuiet,
+})
+await hit('/process-lens/api/config', 'POST', { batchEvery: 0, batchBackground: false })
 const failed = checks.filter((item) => !item.ok)
 console.log(`\n${checks.length - failed.length}/${checks.length} 通过`)
 if (failed.length) process.exitCode = 1
