@@ -346,6 +346,21 @@ check(
 check('省 token 模式会说明是压缩过的', String(smallPrompt.json?.user ?? '').includes('省 token'), String(smallPrompt.json?.user ?? '').slice(0, 40))
 check('预览会说明这次真的用了压缩版', smallPrompt.json?.compactUsed === true, smallPrompt.json?.compactUsed)
 
+// 13b) 工具内容不外发：只发工具名和成败，不发参数与返回
+await hit('/process-lens/api/config', 'POST', { compact: false, hideTools: true })
+const hiddenFull = await hit(`/process-lens/api/prompt?session=${SESSION_ID}`)
+const hiddenFullUser = String(hiddenFull.json?.user ?? '')
+check('开了以后不带工具返回原文', !hiddenFullUser.includes('日志内容很多行'), hiddenFullUser.includes('日志内容很多行') ? '仍然带着原文' : 'ok')
+check('开了以后不带工具参数', !hiddenFullUser.includes('same.log'), hiddenFullUser.includes('same.log') ? '仍然带着参数' : 'ok')
+check('只留工具名和成败', hiddenFullUser.includes('读文件 → 成功'), hiddenFullUser.split('\n').find((line) => line.includes('读文件')) ?? 'no line')
+check('会明说内容没发、不许猜', hiddenFullUser.includes('不得猜测'), hiddenFullUser.slice(-60))
+await hit('/process-lens/api/config', 'POST', { compact: true, hideTools: true })
+const hiddenSmall = await hit(`/process-lens/api/prompt?session=${SESSION_ID}`)
+const hiddenSmallUser = String(hiddenSmall.json?.user ?? '')
+check('精炼版也一样不外发', !hiddenSmallUser.includes('日志内容很多行') && !hiddenSmallUser.includes('same.log'), hiddenSmallUser.slice(0, 60))
+check('精炼版也只留工具名和成败', hiddenSmallUser.includes('读文件 → 成功'), hiddenSmallUser.split('\n').find((line) => line.includes('读文件')) ?? 'no line')
+await hit('/process-lens/api/config', 'POST', { hideTools: false })
+
 // 14) 自定义提示词存档
 const savedPrompt = await hit('/process-lens/api/prompts', 'POST', { action: 'save', name: '给老板看', text: '一句话说完，别讲细节。' })
 check('能存一份自己的提示词', savedPrompt.json?.prompts?.length === 1 && savedPrompt.json.prompts[0].name === '给老板看', savedPrompt.json?.prompts?.map((item) => item.name))

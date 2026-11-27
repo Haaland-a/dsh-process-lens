@@ -1,9 +1,9 @@
 # 过程讲解器（dsh-process-lens）
 
 [![DSH plugin](https://img.shields.io/badge/DSH-plugin-4f7cff)](https://github.com/Haaland-a/dsh-process-lens)
-[![version](https://img.shields.io/badge/version-0.4.1-2ea043)](./package.json)
+[![version](https://img.shields.io/badge/version-0.5.0-2ea043)](./package.json)
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
-[![self test](https://img.shields.io/badge/self--test-103%2F103-2ea043)](./harness.mjs)
+[![self test](https://img.shields.io/badge/self--test-111%2F111-2ea043)](./harness.mjs)
 
 把 AI 干活的每一步摊开给你看：**原文点一下就看全文**（不花额度），**人话解说按需生成**（点哪步才讲哪步），**用哪个模型讲由你单独挑**。
 
@@ -384,6 +384,15 @@ glob=按名字找文件、web_search=上网搜、todo_write=列待办），省�
 - 现在「跟随」档启动时读宿主实际底色（body → html → 面板父节点）算亮度，浅底就上浅色板，深底就上深色板；系统偏好切换时再量一次，打开面板 500ms 后再补量一次（壁纸插件换肤是异步的）。
 - 三档都把底色、字色、`backdrop-filter` 直接写在抽屉元素上并带 `!important`，外部样式表后注入也压不住。
 
+### 4.15 v0.5.0：工具内容不外发（新）
+
+设置页多一个开关 **工具内容不外发**，默认关。
+
+- 关着：和以前一样，工具的参数、返回、报错原文随讲解请求一起发出。
+- 开着：请求里只写 `- 读文件 → 成功`（工具名 + 成败），参数、返回、报错原文一个字都不发；提示词里同时写明「参数和返回都没有发送，具体内容不得猜测或补写」，卡片不会出现编造的文件片段或命令输出。
+- 「省 token（精炼）」开着时同样生效：精炼版只保留工具名和成败，不再从返回里抽关键行。
+- 只影响发出去的内容，本地原文、历史存档、界面显示都不变。
+
 ## 二、三个入口在哪儿
 
 | 位置 | 长什么样 | 干什么 |
@@ -427,6 +436,7 @@ dsh plugin add link:E:/Personal/Desktop/dsh/dsh-process-lens --profile desktop
 | 老会话只显示最后几步 | v0.2.4 已修：点开那一轮会把整轮回放补齐；再看还是少，说明那几步在 DSH 里就没记录 |
 | 切了「全部」下次又变回 N 步 | 不会，这个选择存在设置里；除非清过 process-lens.json |
 | 找不到选模型的地方了 | 在「设置」标签页里，不再占过程页的地方 |
+| 不想让文件内容 / 命令输出进模型 | 设置里打开「工具内容不外发」，只发工具名和成败 |
 | 选了浅色 / 深色但看着没变 | 升级到 0.4.1 后刷新页面；三档都直接写内联样式，能压住宿主和壁纸插件的规则 |
 | 面板没有玻璃感 | 没装壁纸插件（或那套插件没开），退回宿主默认底色，功能不受影响 |
 | 提示词还是显示不全 | 设置页要往下滚；预览区已经不再限高，整段都在 |
@@ -499,7 +509,7 @@ dsh plugin add link:E:/Personal/Desktop/dsh/dsh-process-lens --profile desktop
 node harness.mjs
 ```
 
-用假 ctx 跑 **105 条**断言：历史补账、messageId→轮次定位、工具人话标签、原文（含参数/返回）随卡返回、失败标红、
+用假 ctx 跑 **111 条**断言：历史补账、messageId→轮次定位、工具人话标签、原文（含参数/返回）随卡返回、失败标红、
 
 以及 6 条前端静态断言（新步骤不挤掉正在读的卡、钉住时不拽滚动条、往上翻/展开原文会钉住、吸顶条已删（改成静默钉住）、换轮恢复跟随）、
 「只连流不点 = 0 次模型调用」、显式点讲才 1 次且用插件自己选的模型、讲失败会标 `failed` 并推流、

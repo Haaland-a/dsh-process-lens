@@ -73,6 +73,8 @@ const DEFAULTS = Object.freeze({
   theme: 'auto',
   /** 讲解时让模型先思考再回答（默认关：更快更省钱） */
   thinking: false,
+  /** 工具内容不外发：只发工具名和成败，参数与返回都不发 */
+  hideTools: false,
 })
 
 /** 原文存多少：够看全文，又不至于把内存吃穿 */
@@ -590,6 +592,7 @@ export function apply(ctx) {
       prompts: promptList(),
       compact: settings.compact === true,
       compactCount: settings.compactCount,
+      hideTools: settings.hideTools === true,
       theme: themeOf(settings.theme),
       thinking: settings.thinking === true,
       allSteps: settings.allSteps === true,
@@ -726,6 +729,14 @@ export function apply(ctx) {
     if (step.answer) lines.push(`助手在这一步写下的话（节选）：${clip(step.answer, ANSWER_CHARS)}`)
     if (step.tools.length === 0) {
       lines.push('这一步没有调用任何工具，只是模型自己在想/在写。')
+    } else if (settings.hideTools === true) {
+      // 工具内容不外发：只告诉模型调用了什么、成没成，参数和返回都不发送
+      lines.push('这一步调用过的操作（内容不外发，只有工具名和成败）：')
+      for (const tool of step.tools.slice(-MAX_TOOLS)) {
+        const state = tool.state === 'error' ? '失败' : tool.state === 'running' ? '还在进行' : '成功'
+        lines.push(`- ${toolLabel(tool.name)} → ${state}`)
+      }
+      lines.push('参数和返回都没有发送，具体内容不得猜测或补写。')
     } else {
       lines.push('这一步调用过的操作：')
       for (const tool of step.tools.slice(-MAX_TOOLS)) {
@@ -855,10 +866,12 @@ export function apply(ctx) {
     const rows = recent.map((item) => {
       const action = item.tools.at(-1)
       const extra = item.tools.length > 1 ? `（共 ${item.tools.length} 次）` : ''
-      const param = action ? keyParamOf(action) : ''
+      const hideTools = settings.hideTools === true
+      const param = action && !hideTools ? keyParamOf(action) : ''
       const head = action ? `${toolLabel(action.name)}${param ? `：${param}` : ''}${extra}` : '没调工具'
       let outcome
       if (!action) outcome = '只在自己想/写'
+      else if (hideTools) outcome = action.state === 'error' ? '失败' : action.state === 'running' ? '还在跑' : '成功'
       else if (action.state === 'error') outcome = `失败 ${interestingLines(action.error || '', 2).join(' / ') || '出错了'}`
       else if (action.state === 'running') outcome = '还在跑'
       else outcome = interestingLines(action.result || '', 2).join(' / ') || '没有输出'
@@ -902,7 +915,11 @@ export function apply(ctx) {
     )
     lines.push(folded.text)
     if (folded.legend) lines.push(`图例：${folded.legend}`)
-    lines.push('只看要点，缺的信息就说「看不到」，别猜。按三行格式讲给用户听。')
+    lines.push(
+      settings.hideTools === true
+        ? '工具的参数和返回都没有发送，只能看到工具名和成败，具体内容不得猜测。按三行格式讲给用户听。'
+        : '只看要点，缺的信息就说「看不到」，别猜。按三行格式讲给用户听。',
+    )
     return lines.join('\n')
   }
 
@@ -1423,6 +1440,7 @@ export function apply(ctx) {
         if (body.theme === 'auto' || body.theme === 'light' || body.theme === 'dark') settings.theme = body.theme
         if (typeof body.thinking === 'boolean') settings.thinking = body.thinking
         if (typeof body.allSteps === 'boolean') settings.allSteps = body.allSteps
+    if (typeof body.hideTools === 'boolean') settings.hideTools = body.hideTools
         if (Number.isFinite(Number(body.maxTokens))) settings.maxTokens = Math.min(4000, Math.max(400, Number(body.maxTokens)))
         saveSettingsSoon()
         writeJson(res, 200, { ok: true, settings: publicSettings() })
@@ -1515,6 +1533,7 @@ export function apply(ctx) {
           prompts: promptList(),
           compact: settings.compact === true,
           compactCount: settings.compactCount,
+          hideTools: settings.hideTools === true,
           sample: Boolean(lastStep) === false,
           system,
           user,

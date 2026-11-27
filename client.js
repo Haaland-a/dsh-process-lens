@@ -47,6 +47,7 @@ window.__ModuleLoader__.load({
         styles: [],
         compact: false,
         compactCount: 5,
+  hideTools: false,
         theme: 'auto',
         thinking: false,
       },
@@ -487,6 +488,22 @@ window.__ModuleLoader__.load({
             ),
           ),
                   ),
+        h(
+          'div',
+          { className: 'pl-row' },
+          h('span', { className: 'pl-key' }, '工具内容不外发'),
+          h(
+            'label',
+            { className: 'pl-switch', title: '只发工具名和成败，不发参数与返回' },
+            h('input', {
+              type: 'checkbox',
+              checked: lens.config.hideTools === true,
+              onChange: (event) => void saveConfig({ hideTools: event.target.checked }),
+            }),
+            h('span', { className: 'pl-switch-box' }),
+            h('span', { className: 'pl-switch-text' }, lens.config.hideTools ? '开' : '关'),
+          ),
+        ),
         h(
           'div',
           { className: 'pl-row' },
