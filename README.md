@@ -1,5 +1,10 @@
 # 过程讲解器（dsh-process-lens）
 
+[![DSH plugin](https://img.shields.io/badge/DSH-plugin-4f7cff)](https://github.com/Haaland-a/dsh-process-lens)
+[![version](https://img.shields.io/badge/version-0.2.0-2ea043)](./package.json)
+[![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
+[![self test](https://img.shields.io/badge/self--test-43%2F43-2ea043)](./harness.mjs)
+
 把 AI 干活的每一步摊开给你看：**原文点一下就看全文**（不花额度），**人话解说按需生成**（点哪步才讲哪步），**用哪个模型讲由你单独挑**。
 
 它回答的是那个最常冒出来的问题：*"这半天它到底在忙什么？"*
