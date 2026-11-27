@@ -1,9 +1,9 @@
 # 过程讲解器（dsh-process-lens）
 
 [![DSH plugin](https://img.shields.io/badge/DSH-plugin-4f7cff)](https://github.com/Haaland-a/dsh-process-lens)
-[![version](https://img.shields.io/badge/version-0.2.2-2ea043)](./package.json)
+[![version](https://img.shields.io/badge/version-0.2.3-2ea043)](./package.json)
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
-[![self test](https://img.shields.io/badge/self--test-47%2F47-2ea043)](./harness.mjs)
+[![self test](https://img.shields.io/badge/self--test-51%2F51-2ea043)](./harness.mjs)
 
 把 AI 干活的每一步摊开给你看：**原文点一下就看全文**（不花额度），**人话解说按需生成**（点哪步才讲哪步），**用哪个模型讲由你单独挑**。
 
@@ -73,6 +73,17 @@
 - **设置**：外观、讲解模型、自动弹出、显示几步、自动讲、讲解口味、提示词存档。
 
 设置页自己会滚，提示词预览再长也整段看得到（之前「提示词显示不全」就是这么修掉的）。
+
+### 4.6 要不要它先思考（默认关）
+
+设置页第二行是「让它思考」开关，**默认关**：
+
+| 状态 | 实际发生什么 |
+| --- | --- |
+| 关（默认） | 不传思考档位里偏高的那些，能拿到 none / off / minimal 就用它，拿不到就用最低档；回答更快、更省额度 |
+| 开 | 不干预档位，让模型用自己默认的那一档先想再写；讲得更细，但慢一些、更费额度（预算会自动抬到 2400 token 起，避免还没写完就被截断） |
+
+一句话：平时关着够用；哪一步实在看不懂，再打开让它多想一会儿。
 
 ### 5. 讲解风格 / 自己的提示词 / 省 token
 
@@ -158,6 +169,8 @@ dsh plugin add link:E:/Personal/Desktop/dsh/dsh-process-lens --profile desktop
 | 选了浅色 / 深色但看着没变 | 这两档是固定的；点「跟随壁纸」才会跟壁纸和系统深浅走 |
 | 面板没有玻璃感 | 没装壁纸插件（或那套插件没开），退回宿主默认底色，功能不受影响 |
 | 提示词还是显示不全 | 设置页要往下滚；预览区已经不再限高，整段都在 |
+| 开了思考后变慢 | 正常，它在先想再写；嫌慢就关掉，或者换个更小的模型 |
+| 开着思考还是很快 | 那个模型可能压根没提供思考档位，插件不会硬塞 |
 
 ---
 
@@ -194,6 +207,9 @@ dsh plugin add link:E:/Personal/Desktop/dsh/dsh-process-lens --profile desktop
   滚动和拉伸跟以前一样。设置页是 `.pl-pane`（`flex:1; min-height:0; overflow:auto`），自己滚，
   所以 `Settings + PromptStudio` 再长也不会被抽屉的 `overflow:hidden` 裁掉——顺手把
   `.pl-pre { max-height: 200px }` 在设置页里放开了。
+- **思考开关**：`settings.thinking`（默认 false）。关时 `lowestEffort()` 照旧挑最低档（优先
+  none/off/minimal），开时直接返回 undefined 不传 `reasoningEffort`，让模型走自己的默认档；
+  同时 `maxTokens` 抬到至少 2400，防止思考把预算吃光、正文被截断。
 - **主题**：`settings.theme`（auto / light / dark）由 Host 校验后回传，前端写到抽屉根的 `data-pl-theme`。
   auto 不动任何令牌，只读 `--we-*` 做玻璃；light / dark 在 `.pl-drawer[data-pl-theme=...]` 上覆盖
   `--dsw-alias-bg-*` / `--dsw-alias-label-*` / `--dsw-alias-border-l*` / `--dsw-alias-brand-primary`，
@@ -207,9 +223,9 @@ dsh plugin add link:E:/Personal/Desktop/dsh/dsh-process-lens --profile desktop
 node harness.mjs
 ```
 
-用假 ctx 跑 **47 条**断言：历史补账、messageId→轮次定位、工具人话标签、原文（含参数/返回）随卡返回、失败标红、
+用假 ctx 跑 **51 条**断言：历史补账、messageId→轮次定位、工具人话标签、原文（含参数/返回）随卡返回、失败标红、
 「只连流不点 = 0 次模型调用」、显式点讲才 1 次且用插件自己选的模型、讲失败会标 `failed` 并推流、
 「全部讲一遍」跳过讲过的、`recent` 默认值与上下限、`autoSummarize` 开关与 1–20 上限、
 四种讲解风格、系统提示里确实带三行格式要求、预览里是这一步的真实内容、
 省 token 模式带「最近 N 条概要」且没丢用户诉求、自定义提示词的存 / 切 / 删、
-外观三档（默认跟随、存深色、乱值被忽略、存浅色）。不联网、不花额度。
+外观三档（默认跟随、存深色、乱值被忽略、存浅色）、思考开关（默认关、开、只认真假、再关）。不联网、不花额度。

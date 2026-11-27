@@ -63,6 +63,8 @@ const DEFAULTS = Object.freeze({
   compactCount: 5,
   /** 面板外观：auto = 跟随 DSH / 壁纸插件；light / dark = 固定 */
   theme: 'auto',
+  /** 讲解时让模型先思考再回答（默认关：更快更省钱） */
+  thinking: false,
 })
 
 /** 原文存多少：够看全文，又不至于把内存吃穿 */
@@ -510,6 +512,7 @@ export function apply(ctx) {
       compact: settings.compact === true,
       compactCount: settings.compactCount,
       theme: themeOf(settings.theme),
+      thinking: settings.thinking === true,
     }
   }
 
@@ -567,8 +570,13 @@ export function apply(ctx) {
     return null
   }
 
-  /** 推理档位挑最低一档；挑不出来就不传，交给模型默认。 */
+  /**
+   * 思考关着：挑最低一档（有 none/off/minimal 就用它，等于尽量不思考）。
+   * 思考开着：返回 undefined = 不传档位，让模型用自己默认的那一档。
+   * 挑不出来也不传，交给模型默认。
+   */
   async function lowestEffort(llm, route) {
+    if (settings.thinking === true) return undefined
     try {
       const info = await llm.resolveModelInfo(route.provider, route.model)
       const efforts = info?.reasoning?.efforts
@@ -602,7 +610,11 @@ export function apply(ctx) {
         model: route.model,
         messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
         system: system ?? systemPromptNow(),
-        maxTokens: Number(settings.maxTokens) || DEFAULTS.maxTokens,
+        // 开着思考时预算要留够，不然还没开始写就被截断
+        maxTokens:
+          settings.thinking === true
+            ? Math.max(2400, Number(settings.maxTokens) || DEFAULTS.maxTokens)
+            : Number(settings.maxTokens) || DEFAULTS.maxTokens,
         temperature: 0.3,
         signal: controller.signal,
       }
@@ -1002,6 +1014,7 @@ export function apply(ctx) {
         if (Number.isFinite(Number(body.compactCount)))
           settings.compactCount = Math.min(50, Math.max(1, Math.round(Number(body.compactCount))))
         if (body.theme === 'auto' || body.theme === 'light' || body.theme === 'dark') settings.theme = body.theme
+        if (typeof body.thinking === 'boolean') settings.thinking = body.thinking
         if (Number.isFinite(Number(body.maxTokens))) settings.maxTokens = Math.min(4000, Math.max(400, Number(body.maxTokens)))
         saveSettingsSoon()
         writeJson(res, 200, { ok: true, settings: publicSettings() })

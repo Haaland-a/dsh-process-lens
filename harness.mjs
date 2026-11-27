@@ -282,6 +282,15 @@ check('乱七八糟的值会被忽略', themeBad.json?.settings?.theme === 'dark
 const themeLight = await hit('/process-lens/api/config', 'POST', { theme: 'light' })
 check('能选固定浅色', themeLight.json?.settings?.theme === 'light', themeLight.json?.settings?.theme)
 await hit('/process-lens/api/config', 'POST', { theme: 'auto' })
+// 16) 讲解时是否思考（默认关）
+const thinkDefault = await hit('/process-lens/api/config')
+check('思考默认是关的', thinkDefault.json?.settings?.thinking === false, thinkDefault.json?.settings?.thinking)
+const thinkOn = await hit('/process-lens/api/config', 'POST', { thinking: true })
+check('可以打开思考', thinkOn.json?.settings?.thinking === true, thinkOn.json?.settings?.thinking)
+const thinkBad = await hit('/process-lens/api/config', 'POST', { thinking: 'yes' })
+check('思考开关只认真假', thinkBad.json?.settings?.thinking === true, thinkBad.json?.settings?.thinking)
+const thinkOff = await hit('/process-lens/api/config', 'POST', { thinking: false })
+check('可以再关掉', thinkOff.json?.settings?.thinking === false, thinkOff.json?.settings?.thinking)
 const failed = checks.filter((item) => !item.ok)
 console.log(`\n${checks.length - failed.length}/${checks.length} 通过`)
 if (failed.length) process.exitCode = 1

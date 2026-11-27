@@ -44,6 +44,7 @@ window.__ModuleLoader__.load({
         compact: false,
         compactCount: 5,
         theme: 'auto',
+        thinking: false,
       },
       configLoaded: false,
       providers: null,
@@ -638,6 +639,30 @@ window.__ModuleLoader__.load({
         modelIssue
           ? h('div', { className: 'pl-alert' }, `模型列表：${modelIssue}`)
           : null,
+        h(
+          'div',
+          { className: 'pl-row' },
+          h('span', { className: 'pl-key' }, '让它思考'),
+          h(
+            'label',
+            {
+              className: 'pl-switch',
+              title: '关着（默认）：模型直接给三行结论，快、省额度；开着：先自己想一遍再回答，讲得更细，但慢一些、更费额度',
+            },
+            h('input', {
+              type: 'checkbox',
+              checked: lens.config.thinking === true,
+              onChange: (event) => void saveConfig({ thinking: event.target.checked }),
+            }),
+            h('span', { className: 'pl-switch-box' }),
+            h('span', { className: 'pl-switch-text' }, lens.config.thinking === true ? '开' : '关'),
+          ),
+          h(
+            'span',
+            { className: 'pl-unit' },
+            lens.config.thinking === true ? '先思考再回答 · 慢一点但更细' : '直接回答 · 快、省额度',
+          ),
+        ),
         h(
           'div',
           { className: 'pl-row' },
