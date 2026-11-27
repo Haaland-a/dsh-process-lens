@@ -1,9 +1,9 @@
 # 过程讲解器（dsh-process-lens）
 
 [![DSH plugin](https://img.shields.io/badge/DSH-plugin-4f7cff)](https://github.com/Haaland-a/dsh-process-lens)
-[![version](https://img.shields.io/badge/version-0.2.0-2ea043)](./package.json)
+[![version](https://img.shields.io/badge/version-0.2.2-2ea043)](./package.json)
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
-[![self test](https://img.shields.io/badge/self--test-43%2F43-2ea043)](./harness.mjs)
+[![self test](https://img.shields.io/badge/self--test-47%2F47-2ea043)](./harness.mjs)
 
 把 AI 干活的每一步摊开给你看：**原文点一下就看全文**（不花额度），**人话解说按需生成**（点哪步才讲哪步），**用哪个模型讲由你单独挑**。
 
@@ -65,6 +65,15 @@
 
 右下角浮动，**620 宽 × 面板高度的 74%（上限 780px）**，避开窗口右上角的 − □ ×；正文 13px，原文块可以滚动，长内容不再挤成一条。
 
+### 4.5 两个标签：过程 / 设置
+
+面板顶上分出两页，不用再在过程上面挤一排开关：
+
+- **过程**：你让它做的事、这一轮的每一步、讲这步 / 全部讲一遍；
+- **设置**：外观、讲解模型、自动弹出、显示几步、自动讲、讲解口味、提示词存档。
+
+设置页自己会滚，提示词预览再长也整段看得到（之前「提示词显示不全」就是这么修掉的）。
+
 ### 5. 讲解风格 / 自己的提示词 / 省 token
 
 这三样都在面板设置区的「讲解口味」里：
@@ -91,6 +100,19 @@
 - 提示里会明写「省 token 模式：信息已压缩」，模型知道自己在看摘要，不会瞎编细节；
 - 关掉就是原来的完整内容。长会话想省钱就开它。
 
+**外观 / 主题**（设置页最上面）：
+
+| 档位 | 效果 |
+| --- | --- |
+| 跟随壁纸（默认） | 和 DSH 深浅色、以及你装的 dsh-wallpaper 那套插件同步：底色跟着壁纸走，面板是半透明玻璃，换壁纸换色调这里一起变 |
+| 浅色 | 固定白底，关掉模糊，字最清楚 |
+| 深色 | 固定深底，关掉模糊，夜里不刺眼 |
+
+怎么和壁纸插件配合的：面板优先读壁纸插件的玻璃变量（--we-panel-color / --we-blur / --we-saturate / --we-accent），
+读不到就退回宿主自己的令牌（--dsw-alias-*）；固定浅 / 深两档会**就地覆盖**身边这一圈令牌，
+所以里面的卡片、按钮、滚动条会一起变色，不会出现「外壳换了、里面还是旧色」的花脸。
+没装壁纸插件也能正常用，只是没有玻璃感。
+
 ---
 
 ## 二、三个入口在哪儿
@@ -99,7 +121,7 @@
 | --- | --- | --- |
 | 每条回答下方 | 小按钮「过程」 | 看这一轮的过程（最常用） |
 | 输入框下面 | 小按钮 `看过程` | 不离开对话就能看最新一轮 |
-| 页面浮层 | 右下角浮动面板 | 完整过程、选模型、逐条点讲 |
+| 页面浮层 | 右下角浮动面板 | 「过程」页看步骤、逐条点讲；「设置」页选模型、外观、提示词 |
 
 面板里可以一路往下翻历史轮次——**插件装上之前的轮次也能看**（会从会话自己的事件流里回放补账，不需要你重新问一遍）。
 
@@ -132,6 +154,10 @@ dsh plugin add link:E:/Personal/Desktop/dsh/dsh-process-lens --profile desktop
 | 风格改了但没变 | 卡片是之前讲好的，点「再讲一次」才会用新风格重讲 |
 | 提示词预览是空的 | 这个会话还没有步骤记录，预览给的是样例文本（会标「样例」） |
 | 开了省 token 细节变少 | 正常，它就是拿细节换额度；关掉即恢复 |
+| 找不到选模型的地方了 | 在「设置」标签页里，不再占过程页的地方 |
+| 选了浅色 / 深色但看着没变 | 这两档是固定的；点「跟随壁纸」才会跟壁纸和系统深浅走 |
+| 面板没有玻璃感 | 没装壁纸插件（或那套插件没开），退回宿主默认底色，功能不受影响 |
+| 提示词还是显示不全 | 设置页要往下滚；预览区已经不再限高，整段都在 |
 
 ---
 
@@ -163,6 +189,15 @@ dsh plugin add link:E:/Personal/Desktop/dsh/dsh-process-lens --profile desktop
 - **省 token**：`buildPrompt()` 里 `compact === true` 走压缩分支——
   诉求截 120 字、每步压成一句 `briefOfStep`、思考 240 / 回答 200 / 工具 detail 80 / result 100 且最多 6 个，
   末尾补一句「看清楚的就讲，看不清的别猜」。
+- **标签页**：`state.tab`（`'process'` / `'settings'`）放在全局 store 里，切换只换渲染分支；
+  过程页那一段外面套了 `.pl-frag { display: contents }`，这样它还是抽屉的 flex 子元素，
+  滚动和拉伸跟以前一样。设置页是 `.pl-pane`（`flex:1; min-height:0; overflow:auto`），自己滚，
+  所以 `Settings + PromptStudio` 再长也不会被抽屉的 `overflow:hidden` 裁掉——顺手把
+  `.pl-pre { max-height: 200px }` 在设置页里放开了。
+- **主题**：`settings.theme`（auto / light / dark）由 Host 校验后回传，前端写到抽屉根的 `data-pl-theme`。
+  auto 不动任何令牌，只读 `--we-*` 做玻璃；light / dark 在 `.pl-drawer[data-pl-theme=...]` 上覆盖
+  `--dsw-alias-bg-*` / `--dsw-alias-label-*` / `--dsw-alias-border-l*` / `--dsw-alias-brand-primary`，
+  并把 `--we-blur` 置 0、关掉 backdrop-filter，保证字够清楚。
 - **鉴权**：路由统一过 `ctx.get('connection').requestRejection(req)`。
 - **设置持久化**：`<DSH_PROFILE_DIR>/process-lens.json`。
 
@@ -172,8 +207,9 @@ dsh plugin add link:E:/Personal/Desktop/dsh/dsh-process-lens --profile desktop
 node harness.mjs
 ```
 
-用假 ctx 跑 **43 条**断言：历史补账、messageId→轮次定位、工具人话标签、原文（含参数/返回）随卡返回、失败标红、
+用假 ctx 跑 **47 条**断言：历史补账、messageId→轮次定位、工具人话标签、原文（含参数/返回）随卡返回、失败标红、
 「只连流不点 = 0 次模型调用」、显式点讲才 1 次且用插件自己选的模型、讲失败会标 `failed` 并推流、
 「全部讲一遍」跳过讲过的、`recent` 默认值与上下限、`autoSummarize` 开关与 1–20 上限、
 四种讲解风格、系统提示里确实带三行格式要求、预览里是这一步的真实内容、
-省 token 模式带「最近 N 条概要」且没丢用户诉求、自定义提示词的存 / 切 / 删。不联网、不花额度。
+省 token 模式带「最近 N 条概要」且没丢用户诉求、自定义提示词的存 / 切 / 删、
+外观三档（默认跟随、存深色、乱值被忽略、存浅色）。不联网、不花额度。

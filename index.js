@@ -61,6 +61,8 @@ const DEFAULTS = Object.freeze({
   compact: false,
   /** 省 token 模式带最近几步 */
   compactCount: 5,
+  /** 面板外观：auto = 跟随 DSH / 壁纸插件；light / dark = 固定 */
+  theme: 'auto',
 })
 
 /** 原文存多少：够看全文，又不至于把内存吃穿 */
@@ -487,6 +489,11 @@ export function apply(ctx) {
     }
   }
 
+  /** 外观取值只认三档，别的都当跟随宿主 */
+  function themeOf(value) {
+    return value === 'light' || value === 'dark' ? value : 'auto'
+  }
+
   function publicSettings() {
     return {
       provider: settings.provider,
@@ -502,6 +509,7 @@ export function apply(ctx) {
       prompts: promptList(),
       compact: settings.compact === true,
       compactCount: settings.compactCount,
+      theme: themeOf(settings.theme),
     }
   }
 
@@ -993,6 +1001,7 @@ export function apply(ctx) {
         if (typeof body.compact === 'boolean') settings.compact = body.compact
         if (Number.isFinite(Number(body.compactCount)))
           settings.compactCount = Math.min(50, Math.max(1, Math.round(Number(body.compactCount))))
+        if (body.theme === 'auto' || body.theme === 'light' || body.theme === 'dark') settings.theme = body.theme
         if (Number.isFinite(Number(body.maxTokens))) settings.maxTokens = Math.min(4000, Math.max(400, Number(body.maxTokens)))
         saveSettingsSoon()
         writeJson(res, 200, { ok: true, settings: publicSettings() })

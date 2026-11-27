@@ -24,6 +24,8 @@ window.__ModuleLoader__.load({
     const state = {
       open: false,
       dismissedTurn: null,
+      /** 'process' = 看过程；'settings' = 改设置 */
+      tab: 'process',
       sessionId: null,
       turn: null,
       notice: null,
@@ -41,6 +43,7 @@ window.__ModuleLoader__.load({
         styles: [],
         compact: false,
         compactCount: 5,
+        theme: 'auto',
       },
       configLoaded: false,
       providers: null,
@@ -161,7 +164,7 @@ window.__ModuleLoader__.load({
     }
 
     async function openFor(sessionId, messageId) {
-      setState({ open: true, dismissedTurn: null, sessionId, turn: null, snapshot: null, snapshotKey: null, notice: null })
+      setState({ open: true, tab: 'process', dismissedTurn: null, sessionId, turn: null, snapshot: null, snapshotKey: null, notice: null })
       void loadConfig()
       try {
         const query = new URLSearchParams({ session: String(sessionId ?? '') })
@@ -177,7 +180,7 @@ window.__ModuleLoader__.load({
     }
 
     async function openLatest(sessionId) {
-      setState({ open: true, dismissedTurn: null, sessionId, turn: null, snapshot: null, snapshotKey: null, notice: null })
+      setState({ open: true, tab: 'process', dismissedTurn: null, sessionId, turn: null, snapshot: null, snapshotKey: null, notice: null })
       void loadConfig()
       try {
         const payload = await apiGet(`/latest?session=${encodeURIComponent(String(sessionId ?? ''))}`)
@@ -883,11 +886,57 @@ window.__ModuleLoader__.load({
 
     // ── 槽位 3：右侧抽屉 ──────────────────────────────────────────────────────
 
+    // ── 外观：主题切换（照抄宿主风格 + 壁纸插件的玻璃变量） ──────────────────
+
+    const THEME_CHOICES = [
+      { id: 'auto', label: '跟随壁纸', hint: '跟桌面深浅色和壁纸插件同步，壁纸换色这里一起换' },
+      { id: 'light', label: '浅色', hint: '固定白底，不看系统也不看壁纸' },
+      { id: 'dark', label: '深色', hint: '固定深底，夜里看着不刺眼' },
+    ]
+
+    function themeMode(value) {
+      return value === 'light' || value === 'dark' ? value : 'auto'
+    }
+
+    function ThemePicker({ lens }) {
+      const active = themeMode(lens.config.theme)
+      const current = THEME_CHOICES.find((item) => item.id === active) ?? THEME_CHOICES[0]
+      return h(
+        'div',
+        { className: 'pl-theme' },
+        h(
+          'div',
+          { className: 'pl-theme-head' },
+          h('span', null, '外观'),
+          h('span', { className: 'pl-theme-now' }, current.label),
+        ),
+        h(
+          'div',
+          { className: 'pl-seg pl-seg-wide' },
+          THEME_CHOICES.map((item) =>
+            h(
+              'button',
+              {
+                key: item.id,
+                type: 'button',
+                className: active === item.id ? 'is-on' : '',
+                title: item.hint,
+                onClick: () => void saveConfig({ theme: item.id }),
+              },
+              item.label,
+            ),
+          ),
+        ),
+        h('div', { className: 'pl-theme-hint' }, current.hint),
+      )
+    }
+
     function Drawer() {
       const lens = useLens()
       const [retrying, setRetrying] = useState(false)
       const [showAllSteps, setShowAllSteps] = useState(false)
       const bodyRef = useRef(null)
+      const paneRef = useRef(null)
       const pinnedRef = useRef(true)
       /** 同一轮只自动讲一次，避免快照每刷新一遍就再烧一次额度 */
       const autoDoneRef = useRef('')
@@ -997,6 +1046,13 @@ window.__ModuleLoader__.load({
 
       const close = () => setState({ open: false, dismissedTurn: state.turn ?? null })
 
+      // 切到设置页时把右栏滚回顶部，别让人一进去就落在半截
+      useEffect(() => {
+        if (lens.tab !== 'settings') return
+        const node = paneRef.current
+        if (node) node.scrollTop = 0
+      }, [lens.tab])
+
       // 键盘也能关：Esc
       useEffect(() => {
         if (!lens.open) return undefined
@@ -1036,12 +1092,21 @@ window.__ModuleLoader__.load({
         { className: 'pl-layer' },
         h(
           'aside',
-          { className: 'pl-drawer', role: 'dialog', 'aria-label': '过程讲解' },
+          {
+            className: 'pl-drawer',
+            role: 'dialog',
+            'aria-label': '过程讲解',
+            'data-pl-theme': themeMode(lens.config.theme),
+          },
           h(
             'header',
             { className: 'pl-head' },
             h(IconBulb, { size: 15 }),
-            h('span', { className: 'pl-head-title' }, '这一步是怎么来的'),
+            h(
+              'span',
+              { className: 'pl-head-title' },
+              lens.tab === 'settings' ? '过程面板设置' : '这一步是怎么来的',
+            ),
             h(
               'button',
               { type: 'button', className: 'pl-close', onClick: close, title: '关掉' },
@@ -1050,12 +1115,48 @@ window.__ModuleLoader__.load({
           ),
           h(
             'div',
+            { className: 'pl-tabs', role: 'tablist' },
+            h(
+              'button',
+              {
+                type: 'button',
+                role: 'tab',
+                className: `pl-tab${lens.tab === 'settings' ? '' : ' is-on'}`,
+                'aria-selected': lens.tab === 'settings' ? 'false' : 'true',
+                onClick: () => setState({ tab: 'process' }),
+              },
+              steps.length ? `过程 · ${steps.length} 步` : '过程',
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
+                role: 'tab',
+                className: `pl-tab${lens.tab === 'settings' ? ' is-on' : ''}`,
+                'aria-selected': lens.tab === 'settings' ? 'true' : 'false',
+                onClick: () => setState({ tab: 'settings' }),
+                title: '模型、开关、外观、提示词都在这儿',
+              },
+              '设置',
+            ),
+          ),
+          lens.tab === 'settings'
+            ? h(
+                'div',
+                { className: 'pl-pane', ref: paneRef },
+                h(ThemePicker, { lens }),
+                h(Settings, { lens }),
+              )
+            : h(
+                'div',
+                { className: 'pl-frag' },
+          h(
+            'div',
             { className: 'pl-sub' },
             snapshot?.request
               ? h('span', { className: 'pl-request' }, `你让它做的：${snapshot.request}`)
               : h('span', { className: 'pl-request is-dim' }, '这一轮你让它做的事'),
           ),
-          h(Settings, { lens }),
           h(
             'div',
             { className: 'pl-bar' },
@@ -1149,6 +1250,7 @@ window.__ModuleLoader__.load({
               '关掉',
             ),
           ),
+              ),
         ),
       )
     }
@@ -1273,6 +1375,80 @@ window.__ModuleLoader__.load({
 .pl-dot { width: 6px; height: 6px; border-radius: 50%; background: rgba(127,127,127,.7); }
 @media (prefers-color-scheme: dark) {
   .pl-drawer { box-shadow: 0 24px 64px rgba(0,0,0,.6); }
+}
+
+/* ── 标签页：过程 / 设置 ───────────────────────────────────────────────── */
+.pl-tabs { display: flex; gap: 4px; padding: 0 12px 8px; }
+.pl-tab { font: inherit; font-size: 12px; line-height: 1.5; padding: 3px 11px; border-radius: 999px; border: 1px solid transparent; background: transparent; color: inherit; opacity: .58; cursor: pointer; white-space: nowrap; }
+.pl-tab:hover { opacity: .92; background: rgba(127,127,127,.14); }
+.pl-tab.is-on { opacity: 1; font-weight: 600; background: var(--dsw-alias-bg-layer-1, rgba(127,127,127,.12)); border-color: var(--dsw-alias-border-l2, rgba(127,127,127,.3)); }
+.pl-frag { display: contents; }
+
+/* 设置页自己滚，别把提示词那块裁掉 */
+.pl-pane { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 10px 14px 18px; display: flex; flex-direction: column; gap: 14px; }
+.pl-pane::-webkit-scrollbar { width: 8px; }
+.pl-pane::-webkit-scrollbar-thumb { background: rgba(127,127,127,.3); border-radius: 999px; }
+.pl-pane .pl-settings { padding: 0; gap: 8px; }
+.pl-pane .pl-studio { padding-top: 0; gap: 8px; }
+.pl-pane .pl-pre, .pl-pane .pl-pre-wrap { max-height: none; }
+.pl-pane .pl-pre { overflow: visible; }
+.pl-pane .pl-area { min-height: 96px; }
+
+/* 外观：三档主题 */
+.pl-theme { display: flex; flex-direction: column; gap: 6px; padding-bottom: 12px; border-bottom: 1px solid rgba(127,127,127,.16); }
+.pl-theme-head { display: flex; align-items: baseline; gap: 8px; font-size: 12px; font-weight: 600; }
+.pl-theme-now { margin-left: auto; font-size: 11px; font-weight: 400; opacity: .55; }
+.pl-seg-wide { display: flex; width: 100%; }
+.pl-seg-wide button { flex: 1 1 0; text-align: center; padding: 4px 8px; }
+.pl-theme-hint { font-size: 11px; opacity: .6; }
+
+/* ── 跟壁纸插件一起呼吸：有 --we-* 就用，没有就退回宿主令牌 ─────────────── */
+.pl-drawer {
+  --pl-skin: var(--we-panel-color, var(--dsw-alias-bg-overlay, Canvas));
+  background: color-mix(in srgb, var(--pl-skin) 93%, transparent);
+  border-color: color-mix(in srgb, var(--dsw-alias-border-l2, rgba(127,127,127,.28)) 100%, transparent);
+  -webkit-backdrop-filter: blur(var(--we-blur, 16px)) saturate(var(--we-saturate, 1.2));
+  backdrop-filter: blur(var(--we-blur, 16px)) saturate(var(--we-saturate, 1.2));
+}
+/* 固定浅色：就地覆盖宿主令牌，里面所有控件一起变 */
+.pl-drawer[data-pl-theme="light"] {
+  --pl-skin: #fcfcfe;
+  --dsw-alias-bg-overlay: #fcfcfe;
+  --dsw-alias-bg-layer-1: rgba(18,20,26,.045);
+  --dsw-alias-bg-layer-2: rgba(18,20,26,.075);
+  --dsw-alias-bg-layer-3: rgba(18,20,26,.11);
+  --dsw-alias-label-primary: #1b1c21;
+  --dsw-alias-label-secondary: rgba(27,28,33,.62);
+  --dsw-alias-border-l1: rgba(18,20,26,.12);
+  --dsw-alias-border-l2: rgba(18,20,26,.20);
+  --dsw-alias-brand-primary: #3b6fe0;
+  --dsw-alias-state-success-primary: #1f8a4c;
+  --dsw-alias-state-error-primary: #c6303a;
+  --we-blur: 0px;
+  box-shadow: 0 20px 52px rgba(20,22,30,.18);
+}
+/* 固定深色 */
+.pl-drawer[data-pl-theme="dark"] {
+  --pl-skin: #15161b;
+  --dsw-alias-bg-overlay: #15161b;
+  --dsw-alias-bg-layer-1: rgba(255,255,255,.065);
+  --dsw-alias-bg-layer-2: rgba(255,255,255,.10);
+  --dsw-alias-bg-layer-3: rgba(255,255,255,.14);
+  --dsw-alias-label-primary: #e8e9ef;
+  --dsw-alias-label-secondary: rgba(232,233,239,.66);
+  --dsw-alias-border-l1: rgba(255,255,255,.10);
+  --dsw-alias-border-l2: rgba(255,255,255,.18);
+  --dsw-alias-brand-primary: #7aa2ff;
+  --dsw-alias-state-success-primary: #4ec17f;
+  --dsw-alias-state-error-primary: #ff6b6b;
+  --we-blur: 0px;
+  box-shadow: 0 24px 64px rgba(0,0,0,.55);
+}
+/* 固定主题时别让壁纸色调透进来，字才看得清 */
+.pl-drawer[data-pl-theme="light"], .pl-drawer[data-pl-theme="dark"] {
+  background: var(--pl-skin);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 `
 

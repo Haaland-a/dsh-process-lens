@@ -272,6 +272,16 @@ check('可以切回内置风格', backToPreset.json?.settings?.activePrompt === 
 const removed = await hit('/process-lens/api/prompts', 'POST', { action: 'delete', id: savedId })
 check('可以删掉存档', Array.isArray(removed.json?.prompts) && removed.json.prompts.length === 0, removed.json?.prompts)
 
+// 15) 外观主题三档
+const themeDefault = await hit('/process-lens/api/config')
+check('外观默认跟随宿主', themeDefault.json?.settings?.theme === 'auto', themeDefault.json?.settings?.theme)
+const themeDark = await hit('/process-lens/api/config', 'POST', { theme: 'dark' })
+check('能选固定深色', themeDark.json?.settings?.theme === 'dark', themeDark.json?.settings?.theme)
+const themeBad = await hit('/process-lens/api/config', 'POST', { theme: 'neon' })
+check('乱七八糟的值会被忽略', themeBad.json?.settings?.theme === 'dark', themeBad.json?.settings?.theme)
+const themeLight = await hit('/process-lens/api/config', 'POST', { theme: 'light' })
+check('能选固定浅色', themeLight.json?.settings?.theme === 'light', themeLight.json?.settings?.theme)
+await hit('/process-lens/api/config', 'POST', { theme: 'auto' })
 const failed = checks.filter((item) => !item.ok)
 console.log(`\n${checks.length - failed.length}/${checks.length} 通过`)
 if (failed.length) process.exitCode = 1
