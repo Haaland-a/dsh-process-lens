@@ -591,6 +591,42 @@ check('没人看又没开后台跑：一步都不调', llmCalls.length === calls
   calls: llmCalls.length - callsQuiet,
 })
 await hit('/process-lens/api/config', 'POST', { batchEvery: 0, batchBackground: false })
+// 16) 重新讲一遍：讲过的也能再讲，还能临时换一份预设提示词（只这一次）
+const cfgBeforeReplay = await hit('/process-lens/api/config')
+const styleBeforeReplay = cfgBeforeReplay.json?.settings?.style
+const callsReplay = llmCalls.length
+const replayRes = await hit('/process-lens/api/explain', 'POST', {
+  session: SESSION_ID,
+  turn: 10,
+  step: 2,
+  replay: true,
+  preset: 's::brief',
+})
+check('重新讲一遍会接单', replayRes.json?.steps?.[0] === 2, replayRes.json)
+const replayCall = llmCalls[llmCalls.length - 1] ?? {}
+check('重新讲一遍真的又调了一次模型', llmCalls.length === callsReplay + 1, {
+  calls: llmCalls.length - callsReplay,
+})
+check(
+  '临时换的预设进了这一次的 system，不是设置里的',
+  String(replayCall.system ?? '').includes('标题控制在 6–10 个字'),
+  String(replayCall.system ?? '').slice(0, 40),
+)
+const cfgAfterReplay = await hit('/process-lens/api/config')
+check(
+  '换预设只这一次生效，存档里的风格没被改',
+  cfgAfterReplay.json?.settings?.style === styleBeforeReplay,
+  { before: styleBeforeReplay, after: cfgAfterReplay.json?.settings?.style },
+)
+check('客户端有「重新讲一遍」按钮和预设菜单',
+  clientSrc.includes('重新讲一遍') && clientSrc.includes('pl-menu-item') && clientSrc.includes('replay: true'),
+  null,
+)
+check('Host 认 replay 和一次性预设',
+  hostSrc.includes('body.replay === true') && hostSrc.includes('systemPromptWith(job.preset)') && hostSrc.includes('const redo = again === true'),
+  null,
+)
+
 const failed = checks.filter((item) => !item.ok)
 console.log(`\n${checks.length - failed.length}/${checks.length} 通过`)
 if (failed.length) process.exitCode = 1

@@ -142,14 +142,17 @@ window.__ModuleLoader__.load({
     }
 
     /** 只在用户明确点了才花 token：讲指定的几步（不传就是这一轮全部）。 */
-    async function explainSteps(sessionId, turn, steps) {
+    async function explainSteps(sessionId, turn, steps, options) {
       if (!sessionId || turn === null || turn === undefined) return
       const list = Array.isArray(steps) ? steps.filter((item) => item !== null && item !== undefined) : []
+      // 「重新讲一遍」：已讲好的也重讲，preset 是这一趟临时换的提示词（空 = 用设置里的）
+      const replay = options?.replay === true
+      const preset = typeof options?.preset === 'string' ? options.preset : ''
       try {
         if (list.length === 0) {
-          await apiPost('/explain', { session: sessionId, turn })
+          await apiPost('/explain', { session: sessionId, turn, replay, preset })
         } else {
-          for (const one of list) await apiPost('/explain', { session: sessionId, turn, step: one })
+          for (const one of list) await apiPost('/explain', { session: sessionId, turn, step: one, replay, preset })
         }
         setState({ notice: null })
       } catch (error) {
@@ -899,6 +902,11 @@ window.__ModuleLoader__.load({
               h('p', null, '· 打开时显示 N 步：面板一进来先摆最近 N 步（默认 8），上面有按钮「展开这一轮全部」，不会漏步也不至于一屏刷不完。'),
               h('p', null, '· 读的时候不会被打断：你往上翻、或者点开「展开原文」，面板就把当前这几步钉住，新步骤只在下面排队，点「回到最新」才跟过去。'),
               h('p', null, '· 讲这步 / 全部讲一遍：点哪个讲哪个，点一次算一次模型调用，讲到过的会标「讲完了」。'),
+        h(
+          'p',
+          null,
+          '· 重新讲一遍：讲过的也能再讲，还能临时换一份提示词（内置风格或你自己存的），只影响这一次，设置里的风格不会被改。',
+        ),
               h('p', null, '· 省 token++：这才是「每 N 步发一次」。开着以后平时不吭声，每攒够 N 步才找一次模型，一次把这 N 步合起来讲；10 步只花 2 次调用，比一步一步单讲省得多。'),
               h('p', null, '· 后台跑：省 token++ 的附带选项。关着 = 只有面板打开时才跑（一关面板就停，一分不花）；开着 = 面板关着它也照常按 N 步攒着讲。'),
               h('p', null, '· 和省 token++ 冲突：省 token++ 要「攒够再一次」，而「打开时自动讲」「开着就自动讲」是「一步一讲」，两个一起开等于白省，所以开着批量时它会提示你把那两个关掉。'),
@@ -993,10 +1001,19 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function Card({ card, onExplain, onPin }) {
+    function Card({ card, onExplain, onPin, onReplay, presetStyles, presetSaved }) {
       const pending = card.status === 'running'
       const busy = card.explain === 'queued' || card.explain === 'running'
       const done = card.explain === 'done'
+      const redoing = card.replaying === true
+      // 预设提示词菜单：点「重新讲一遍」才展开，选完就收起
+      const [picking, setPicking] = useState(false)
+      const styleItems = Array.isArray(presetStyles) ? presetStyles : []
+      const savedItems = Array.isArray(presetSaved) ? presetSaved : []
+      const pickPreset = (value) => {
+        setPicking(false)
+        onReplay?.(card.step, value)
+      }
       const lines = []
       if (card.doing) lines.push({ key: '在做什么', text: card.doing })
       if (card.result) lines.push({ key: '结果', text: card.result })
@@ -1010,6 +1027,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 'pl-step-no' }, `第 ${card.step} 步`),
           h('span', { className: 'pl-card-title' }, card.title),
           card.batchRange ? h('span', { className: 'pl-batchtag' }, `第 ${card.batchRange[0]}~${card.batchRange[1]} 步合并`) : null,
+          card.presetName ? h('span', { className: 'pl-presettag' }, card.presetName) : null,
           pending ? h('span', { className: 'pl-spinner', 'aria-hidden': true }) : null,
         ),
         // 原文在上：不花额度也能看清这一步到底做了什么
@@ -1051,17 +1069,80 @@ window.__ModuleLoader__.load({
           { className: 'pl-card-foot' },
           h('span', { className: 'pl-meta' }, pending ? '还在进行' : `用了 ${formatDuration(card.durationMs)}`),
           h(
-            'button',
-            {
-              type: 'button',
-              className: `pl-mini${done ? ' is-done' : ''}`,
-              onClick: () => onExplain?.(card.step),
-              disabled: busy || done,
-              title: done ? '这一步已经讲过了' : '只讲这一步（点一次 = 一次模型调用）',
-            },
-            busy ? '正在讲…' : done ? '讲完了' : card.explain === 'failed' ? '再讲一次' : card.explain === 'batched' ? '单独讲这步' : '讲这步',
+            'div',
+            { className: 'pl-foot-btns' },
+            h(
+              'button',
+              {
+                type: 'button',
+                className: `pl-mini${done ? ' is-done' : ''}`,
+                onClick: () => onExplain?.(card.step),
+                disabled: busy || done,
+                title: done ? '这一步已经讲过了' : '只讲这一步（点一次 = 一次模型调用）',
+              },
+              busy ? '正在讲…' : done ? '讲完了' : card.explain === 'failed' ? '再讲一次' : card.explain === 'batched' ? '单独讲这步' : '讲这步',
+            ),
+            // 重新讲一遍：已经讲过的也能再讲，还能临时换一份提示词
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'pl-mini pl-mini-ghost',
+                onClick: () => setPicking((prev) => !prev),
+                disabled: busy,
+                title: '用另一份提示词把这一步再讲一次（点一次 = 一次模型调用）',
+              },
+              redoing ? '重讲中…' : '重新讲一遍',
+            ),
           ),
         ),
+        picking && !busy
+          ? h(
+              'div',
+              { className: 'pl-menu' },
+              h('div', { className: 'pl-menu-head' }, '换一份提示词，重讲这一步'),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'pl-menu-item is-current',
+                  onClick: () => pickPreset(''),
+                },
+                card.presetName ? `用当前设置（现在是「${card.presetName}」）` : '用当前设置',
+              ),
+              savedItems.length
+                ? h('div', { className: 'pl-menu-head' }, '我的存档')
+                : null,
+              ...savedItems.map((item) =>
+                h(
+                  'button',
+                  {
+                    key: item.value,
+                    type: 'button',
+                    className: 'pl-menu-item',
+                    onClick: () => pickPreset(item.value),
+                  },
+                  item.label,
+                ),
+              ),
+              styleItems.length
+                ? h('div', { className: 'pl-menu-head' }, '内置风格')
+                : null,
+              ...styleItems.map((item) =>
+                h(
+                  'button',
+                  {
+                    key: item.value,
+                    type: 'button',
+                    className: 'pl-menu-item',
+                    onClick: () => pickPreset(item.value),
+                  },
+                  item.label,
+                ),
+              ),
+              h('div', { className: 'pl-menu-foot' }, '选哪份就用哪份讲这一次；设置里的风格不会被改掉。'),
+            )
+          : null,
       )
     }
 
@@ -1530,6 +1611,16 @@ window.__ModuleLoader__.load({
                 card,
                 onPin: pinHere,
                 onExplain: (step) => void explainSteps(lens.sessionId, lens.turn, [step]),
+                onReplay: (step, preset) =>
+                  void explainSteps(lens.sessionId, lens.turn, [step], { replay: true, preset }),
+                presetStyles: (Array.isArray(lens.config.styles) ? lens.config.styles : []).map((item) => ({
+                  value: `s::${item.id}`,
+                  label: `${item.name} · ${item.hint}`,
+                })),
+                presetSaved: (Array.isArray(lens.config.prompts) ? lens.config.prompts : []).map((item) => ({
+                  value: `p::${item.id}`,
+                  label: item.name || item.id,
+                })),
               }),
             ),
             showAllSteps && recent > 0 && steps.length > recent
@@ -1609,6 +1700,15 @@ window.__ModuleLoader__.load({
 .pl-mini:hover { background: rgba(127,127,127,.12); opacity: 1; }
 .pl-mini:disabled { opacity: .4; cursor: default; }
 .pl-mini.is-done { color: var(--dsw-alias-state-success-primary, #2f9e5f); border-color: transparent; }
+.pl-mini-ghost { border-style: dashed; }
+.pl-foot-btns { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.pl-presettag { flex: none; padding: 0 6px; border-radius: 999px; font-size: 10px; line-height: 16px; color: #6d28d9; background: rgba(139,92,246,.13); }
+.pl-menu { margin-top: 7px; padding: 6px; border-radius: 10px; border: 1px solid rgba(127,127,127,.26); background: var(--dsw-alias-bg-layer-2, rgba(127,127,127,.07)); display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow: auto; }
+.pl-menu-head { font-size: 10.5px; opacity: .5; padding: 3px 7px 2px; }
+.pl-menu-item { font: inherit; font-size: 11.5px; text-align: left; padding: 5px 8px; border-radius: 7px; border: 0; background: transparent; color: inherit; cursor: pointer; line-height: 1.35; }
+.pl-menu-item:hover { background: rgba(127,127,127,.14); }
+.pl-menu-item.is-current { opacity: .85; }
+.pl-menu-foot { font-size: 10.5px; opacity: .45; padding: 5px 7px 2px; line-height: 1.4; }
 .pl-seg { display: inline-flex; border: 1px solid rgba(127,127,127,.32); border-radius: 9px; overflow: hidden; }
 .pl-seg button { font: inherit; font-size: 11.5px; padding: 3px 10px; border: 0; background: transparent; color: inherit; opacity: .65; cursor: pointer; }
 .pl-seg button.is-on { background: var(--dsw-alias-brand-primary, #4f7cff); color: #fff; opacity: 1; }

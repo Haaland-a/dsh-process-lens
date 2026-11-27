@@ -337,6 +337,29 @@ export function apply(ctx) {
     return `${persona}\n\n${OUTPUT_RULES}`
   }
 
+  /** 某一份预设（只对这一次讲生效，不改存档）：'s::<内置风格>' / 'p::<存档id>' / 空 = 用当前设置 */
+  function personaOf(preset) {
+    const raw = String(preset ?? '')
+    if (!raw) return null
+    if (raw.startsWith('p::')) {
+      const hit = promptList().find((item) => item.id === raw.slice(3))
+      if (hit?.text?.trim()) return { name: hit.name || '我的提示词', persona: hit.text.trim() }
+      return null
+    }
+    if (raw.startsWith('s::')) {
+      const preset = STYLE_PRESETS[raw.slice(3)]
+      if (preset) return { name: preset.name, persona: preset.persona }
+    }
+    return null
+  }
+
+  /** 「重新讲一遍」用：这一份预设只对这一次生效，不覆盖设置里的风格。 */
+  function systemPromptWith(preset) {
+    const picked = personaOf(preset)
+    if (!picked) return systemPromptNow()
+    return `${picked.persona}\n\n${OUTPUT_RULES}`
+  }
+
   function styleView() {
     const custom = activeCustom()
     const preset = currentStyle()
@@ -480,6 +503,10 @@ export function apply(ctx) {
       batchTo: step.batchTo ?? null,
       /** 这一张卡是第几号到第几号的合并总结 */
       batchRange: step.batchRange ?? null,
+      /** 重新讲一遍进行中：旧的三行还留着，只是按钮显示「重讲中…」 */
+      replaying: step.replaying === true,
+      /** 这次是用哪份预设讲的（空 = 设置里的那个） */
+      presetName: step.presetName ?? '',
       /** 上一次讲解实际发出去多少字（省 token 模式下能直接看出效果） */
       chars: Number(step.promptChars) || 0,
       tools: toolsView(step),
@@ -870,13 +897,15 @@ export function apply(ctx) {
     const compact = buildPromptCompact(record, step)
     return compact.length < full.length ? compact : full
   }
-  function enqueue(sessionId, turn, step, force) {
+  function enqueue(sessionId, turn, step, force, again, preset) {
     if (replaying) return
     const record = sessions.get(String(sessionId))?.turns.get(turn)
     const entry = record?.steps.get(step)
     if (!entry) return
-    if (entry.explain === 'done' || entry.explain === 'running') return
-    if (force !== true) {
+    const redo = again === true
+    // 重新讲一遍：讲过的也能再排，旧的三行先留着，等新的到了再换
+    if (!redo && (entry.explain === 'done' || entry.explain === 'running')) return
+    if (!redo && force !== true) {
       if (entry.explain !== 'idle') {
         entry.explain = 'idle'
         pushCard(sessionId, turn, step)
@@ -887,8 +916,13 @@ export function apply(ctx) {
     if (inflight.has(key)) return
     if (queue.some((job) => job.key === key)) return
     entry.explain = 'queued'
+    if (redo) {
+      entry.replaying = true
+      entry.error = null
+      entry.presetName = personaOf(preset)?.name ?? ''
+    }
     pushCard(sessionId, turn, step)
-    queue.push({ key, sessionId: String(sessionId), turn, step })
+    queue.push({ key, sessionId: String(sessionId), turn, step, preset: redo ? String(preset ?? '') : '' })
     void drain()
   }
 
@@ -983,16 +1017,18 @@ export function apply(ctx) {
       if (!route) throw new Error('还没选好讲解模型，请在抽屉顶部挑一个')
       const promptText = job.kind === 'batch' ? buildBatchPrompt(record, entry, job.from, job.to) : buildPrompt(record, entry)
       entry.promptChars = promptText.length
-      const text = await callOnce(route, promptText, systemPromptNow())
+      const text = await callOnce(route, promptText, systemPromptWith(job.preset))
       if (!text) throw new Error('模型这次没有返回内容')
       const card = parseCard(text)
       entry.card = card
       if (job.kind === 'batch') entry.batchRange = [job.from, job.to]
+      entry.replaying = false
       entry.error = null
       entry.explain = 'done'
     } catch (error) {
       entry.error = oneLine(error?.message ?? error, 160)
       entry.explain = 'failed'
+      entry.replaying = false
       if (job.kind === 'batch') {
         // 这一批没讲成：把合并标记退回单步，用户点单步照样能讲
         for (const one of record.steps.values()) {
@@ -1381,6 +1417,8 @@ export function apply(ctx) {
           return
         }
         // 不传 step = 「这一轮还没讲过的都讲一遍」；已经讲好的不重讲，免得白烧额度。
+        const preset = typeof body.preset === 'string' ? body.preset : ''
+        const again = body.replay === true
         const only = body.step === undefined ? null : Number(body.step)
         const targets =
           only === null
@@ -1394,7 +1432,7 @@ export function apply(ctx) {
           entry.explain = 'idle'
           entry.error = null
         }
-        for (const step of targets) enqueue(sessionId, turn, step, true)
+        for (const step of targets) enqueue(sessionId, turn, step, true, again, preset)
         writeJson(res, 200, { ok: true, steps: targets })
         return
       }
