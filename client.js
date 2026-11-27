@@ -23,6 +23,7 @@ window.__ModuleLoader__.load({
 
     const state = {
       open: false,
+      dismissedTurn: null,
       sessionId: null,
       turn: null,
       notice: null,
@@ -160,7 +161,7 @@ window.__ModuleLoader__.load({
     }
 
     async function openFor(sessionId, messageId) {
-      setState({ open: true, sessionId, turn: null, snapshot: null, snapshotKey: null, notice: null })
+      setState({ open: true, dismissedTurn: null, sessionId, turn: null, snapshot: null, snapshotKey: null, notice: null })
       void loadConfig()
       try {
         const query = new URLSearchParams({ session: String(sessionId ?? '') })
@@ -176,7 +177,7 @@ window.__ModuleLoader__.load({
     }
 
     async function openLatest(sessionId) {
-      setState({ open: true, sessionId, turn: null, snapshot: null, snapshotKey: null, notice: null })
+      setState({ open: true, dismissedTurn: null, sessionId, turn: null, snapshot: null, snapshotKey: null, notice: null })
       void loadConfig()
       try {
         const payload = await apiGet(`/latest?session=${encodeURIComponent(String(sessionId ?? ''))}`)
@@ -246,9 +247,14 @@ window.__ModuleLoader__.load({
       const active = lens.open && lens.sessionId === sessionId
 
       const onClick = useCallback(() => {
+        // 已经开着就再点一次关掉，省得去找 ×
+        if (state.open && state.sessionId === sessionId) {
+          setState({ open: false, dismissedTurn: state.turn ?? null })
+          return
+        }
         setBusy(true)
         void openFor(sessionId, messageId).finally(() => setBusy(false))
-      }, [sessionId, messageId])
+      }, [sessionId, messageId, lens.open])
 
       return h(
         'button',
@@ -275,25 +281,27 @@ window.__ModuleLoader__.load({
 
       // 「自动弹出」：轻量轮询（刻意不连 SSE，免得被算成"有人在看"而多花额度）。
       // 新一轮出现、或页面刚打开时就有正在跑的一轮，就把进度抽屉拉出来。
+      // 关键：seen 必须活在 ref 里。写在 effect 内部的话，用户一关面板 → open 变 false
+      // → effect 重跑 → seen 归零 → 又把面板弹回来，表现就是「关不掉」。
+      const seenRef = useRef(null)
       useEffect(() => {
         if (!lens.config.autoOpen || !sessionId) return
         let stopped = false
-        let seen = null
         const tick = async () => {
           try {
             const data = await apiGet(`/latest?session=${encodeURIComponent(String(sessionId))}`)
             if (stopped) return
             const turn = typeof data?.turn === 'number' ? data.turn : null
             if (turn === null) return
-            if (seen === null) {
-              seen = turn
-              if (data?.status === 'running' && !state.open) void openLatest(sessionId)
-              return
-            }
-            if (turn > seen) {
-              seen = turn
-              if (!state.open) void openLatest(sessionId)
-            }
+            const first = seenRef.current === null
+            if (!first && turn <= seenRef.current) return
+            seenRef.current = turn
+            // 用户刚把这轮关掉，就别再自作聪明地弹回来
+            if (state.dismissedTurn === turn) return
+            if (state.open) return
+            // 页面刚打开时只有正在跑的那一轮才弹，别把上一轮的旧账摊出来
+            if (first && data?.status !== 'running') return
+            void openLatest(sessionId)
           } catch {}
         }
         void tick()
@@ -302,7 +310,7 @@ window.__ModuleLoader__.load({
           stopped = true
           clearInterval(timer)
         }
-      }, [lens.config.autoOpen, sessionId, lens.open])
+      }, [lens.config.autoOpen, sessionId])
 
       return h(
         'div',
@@ -987,7 +995,17 @@ window.__ModuleLoader__.load({
         pinnedRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 60
       }
 
-      const close = () => setState({ open: false })
+      const close = () => setState({ open: false, dismissedTurn: state.turn ?? null })
+
+      // 键盘也能关：Esc
+      useEffect(() => {
+        if (!lens.open) return undefined
+        const onKey = (event) => {
+          if (event.key === 'Escape') close()
+        }
+        window.addEventListener('keydown', onKey)
+        return () => window.removeEventListener('keydown', onKey)
+      }, [lens.open, lens.turn])
 
       const explainAll = async () => {
         if (!lens.sessionId || lens.turn === null) return
@@ -1154,7 +1172,8 @@ window.__ModuleLoader__.load({
 }
 .pl-head { display: flex; align-items: center; gap: 7px; padding: 9px 12px 6px; }
 .pl-head-title { font-weight: 600; font-size: 13px; }
-.pl-close { margin-left: auto; border: 0; background: transparent; color: inherit; opacity: .5; font-size: 18px; line-height: 1; cursor: pointer; padding: 0 2px; }
+.pl-close { margin-left: auto; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: 0; border-radius: 8px; background: transparent; color: inherit; opacity: .55; font-size: 17px; line-height: 1; cursor: pointer; padding: 0; }
+.pl-close:hover { opacity: 1; background: rgba(127,127,127,.18); }
 .pl-close:hover { opacity: .9; }
 .pl-sub { padding: 0 12px 7px; }
 .pl-request { display: block; font-size: 11.5px; padding: 6px 9px; border-radius: 8px; background: var(--dsw-alias-bg-layer-1, rgba(127,127,127,.10)); max-height: 54px; overflow: auto; }
