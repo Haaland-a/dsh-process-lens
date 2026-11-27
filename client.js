@@ -478,7 +478,7 @@ window.__ModuleLoader__.load({
             },
             title: '精炼最近这么多步再发（1~50）',
           }),
-          h('span', { className: 'pl-unit' }, '步 · 只精炼最近这些步'),
+          h('span', { className: 'pl-unit' }, '步'),
           ...[3, 5, 10, 20].map((n) =>
             h(
               'button',
@@ -581,16 +581,16 @@ window.__ModuleLoader__.load({
     // ── 设置区：模型 / 模式 / 自动弹出 ────────────────────────────────────────
 
     /**
-     * 每个设置后面那句人话：说清它管什么，再顺手标一下「推荐开 / 推荐关」。
-     * 推荐值直接写成小标签，省得人自己去猜哪个开关该动。
+     * 设置行尾只留一枚「推荐开 / 推荐关」小标签，屏幕干净。
+     * 原来那句解释收进 hover：想弄明白的时候鼠标停一下就能看，不想看就不占地方。
      */
     function Note({ text, recommend }) {
       const label = recommend === true ? '推荐开' : recommend === false ? '推荐关' : String(recommend ?? '')
+      if (!label) return null
       return h(
-        'div',
-        { className: 'pl-why' },
-        h('span', null, text),
-        label ? h('span', { className: `pl-rec${recommend === false ? ' is-off' : ''}` }, label) : null,
+        'span',
+        { className: `pl-rec${recommend === false ? ' is-off' : ''}`, title: text || '' },
+        label,
       )
     }
 
@@ -673,7 +673,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'pl-row' },
-          h('span', { className: 'pl-key' }, '让它思考'),
+          h('span', { className: 'pl-key' }, '思考'),
           h(
             'label',
             {
@@ -688,11 +688,7 @@ window.__ModuleLoader__.load({
             h('span', { className: 'pl-switch-box' }),
             h('span', { className: 'pl-switch-text' }, lens.config.thinking === true ? '开' : '关'),
           ),
-          h(
-            'span',
-            { className: 'pl-unit' },
-            lens.config.thinking === true ? '先思考再回答 · 慢一点但更细' : '直接回答 · 快、省额度',
-          ),
+
           h(Note, { text: '先自己想一遍再回答，讲得更细；代价是慢一点、更费额度。平时关着就够用。', recommend: false }),
         ),
         h(
@@ -733,7 +729,7 @@ window.__ModuleLoader__.load({
             },
             title: '打开面板时先摆最近这么多步；想看更多随时可以点「展开全部」',
           }),
-          h('span', { className: 'pl-unit' }, '步 · 只摆最新的这些，想看全随时展开'),
+          h('span', { className: 'pl-unit' }, '步'),
           h(Note, { text: '一进来先摆最近这么多步；想看全这一轮，上面点一下「展开」就行。', recommend: '推荐 8' }),
         ),
         h(
@@ -771,7 +767,7 @@ window.__ModuleLoader__.load({
             },
             title: '打开面板时自动讲最近这么多步',
           }),
-          h('span', { className: 'pl-unit' }, '步 · 一打开就自动讲这些的概要'),
+          h('span', { className: 'pl-unit' }, '步'),
           h(Note, { text: '一打开面板就自动把最近几步翻成人话，会花额度；想一分不花就关着，手动点「讲这步」。', recommend: false }),
         ),
         h(PromptStudio, { lens }),
@@ -1514,8 +1510,7 @@ window.__ModuleLoader__.load({
 .pl-raw-code.is-args { opacity: .6; background: rgba(127,127,127,.06); border-radius: 6px; padding: 4px 6px; }\n.pl-raw-out { flex: 1 1 100%; font-size: 11.5px; opacity: .72; word-break: break-word; white-space: pre-wrap; max-height: 240px; overflow: auto; }
 .pl-num { width: 66px; font: inherit; font-size: 12px; padding: 3px 7px; border-radius: 7px; border: 1px solid rgba(127,127,127,.32); background: transparent; color: inherit; }
 .pl-unit { font-size: 11px; opacity: .6; }
-.pl-why { flex-basis: 100%; display: flex; align-items: center; gap: 6px; margin-top: 1px; font-size: 11px; line-height: 1.5; opacity: .72; }
-.pl-rec { flex: none; padding: 0 5px; border-radius: 999px; font-size: 10px; line-height: 15px; background: rgba(64,160,110,.16); color: #2f8a5b; }
+.pl-rec { flex: none; margin-left: 2px; padding: 0 6px; border-radius: 999px; font-size: 10px; line-height: 16px; background: rgba(64,160,110,.16); color: #2f8a5b; cursor: help; }
 .pl-rec.is-off { background: rgba(120,130,150,.16); color: #6b7280; }
 .pl-more-steps { align-self: stretch; font: inherit; font-size: 11.5px; padding: 6px 10px; border-radius: 9px; border: 1px dashed rgba(127,127,127,.34); background: transparent; color: inherit; opacity: .75; cursor: pointer; }
 .pl-more-steps:hover { background: rgba(127,127,127,.1); opacity: 1; }
