@@ -1,0 +1,10 @@
+# dsh-process-lens bundle patch
+#
+# 安装方式（二者其一）：
+#   dsh plugin --profile desktop add link:E:\Personal\Desktop\dsh\dsh-process-lens
+#   或在设置里用「插件 → 安装 bundle」指向本目录
+#
+# 装完后这个 patch 会把 host 半挂进插件树；client 半由 dsh.client 声明自动注入。
+- insert:
+    - id: process-lens
+      name: 'dsh-process-lens'
