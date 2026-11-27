@@ -448,8 +448,10 @@ check(
   '静默排队',
 )
 check(
-  '自动弹出推荐关（默认也不弹）',
-  clientSrc.includes('关着（推荐）') && readFileSync(join(import.meta.dirname, 'index.js'), 'utf8').includes('autoOpen: false'),
+  '自动弹出默认关（界面上不再写推荐语）',
+  clientSrc.includes('新一轮出现时自动打开面板') &&
+    !clientSrc.includes('关着（推荐）') &&
+    readFileSync(join(import.meta.dirname, 'index.js'), 'utf8').includes('autoOpen: false'),
   'autoOpen 默认关',
 )
 check(
@@ -491,7 +493,7 @@ check(
 )
 check(
   '被合并的步会写清楚「并进第 k 步」',
-  clientSrc.includes('已并进第 ${card.batchTo} 步的总结') && clientSrc.includes('单独讲这步'),
+  clientSrc.includes('已并进第 ${card.batchTo} 步的总结') && clientSrc.includes('单独生成'),
   '合并标记有文案，也还能单独讲',
 )
 check(
@@ -673,12 +675,14 @@ check('重放不会留下一条假的「还在进行」', dedupeTools.every((ite
 // 19) v0.4.0：主页花销声明、删掉的两块声明、浅色模式底色、提示词准确性
 const v040Client = readFileSync(new URL('./client.js', import.meta.url), 'utf8')
 const v040Host = readFileSync(new URL('./index.js', import.meta.url), 'utf8')
-check('主页写着会花 token、建议用便宜模型', v040Client.includes('讲解会调模型、花 token'))
+check('主页写着会花 token', v040Client.includes('讲解会调用模型、消耗 token'))
 check('吸顶条「后面又做了 N 步」已删掉', !v040Client.includes('后面又做了'))
 check('黄色冲突框已删掉', !v040Client.includes('pl-warn') && !v040Client.includes('和省 token++ 冲突'))
 check('浅色模式真的换底色', v040Client.includes('background: #f7f8fb !important') && v040Client.includes('color-scheme: light'))
 check('没开自动讲时不再常驻一句声明', !v040Client.includes('默认只显示原文'))
-check('外观写明只改这个面板', v040Client.includes('只换这个面板的底色和字色'))
+    check('外观不再写「只改这个面板」这类声明', !v040Client.includes('只换这个面板的底色和字色') && !v040Client.includes('跟桌面深浅色和壁纸插件同步'))
+    check('跟随档按周围底色切换（读宿主底色 + 内联 important）', v040Client.includes('lum > 0.55') && v040Client.includes("el.style.setProperty('background'"))
+    check('界面上不再有「翻译成人话」「讲这步」这类口语', !v040Client.includes('翻译成人话') && !v040Client.includes('讲这步'))
 check('提示词要求名词照抄原文', v040Host.includes('名词照抄原文'))
 check('parseCard 能认「1. 标题：…」这种写法', v040Host.includes('(?:\\d+[.、)]\\s*)?'))
 

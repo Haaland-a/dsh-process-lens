@@ -180,7 +180,7 @@ window.__ModuleLoader__.load({
         const payload = await apiGet(`/turn?${query.toString()}`)
         setState({ turn: payload?.turn ?? null })
         if (payload?.turn === null || payload?.turn === undefined) {
-          setState({ notice: '这一轮还没留下过程记录，等它跑一会儿再点' })
+          setState({ notice: '本轮暂无过程记录' })
         }
       } catch (error) {
         setState({ notice: `没读到过程记录：${error?.message ?? error}` })
@@ -213,17 +213,11 @@ window.__ModuleLoader__.load({
       return `${minutes} 分 ${seconds} 秒`
     }
 
-    function turnTitle(snapshot) {
-      if (!snapshot) return ''
-      if (snapshot.request) return snapshot.request
-      return '这一轮你让它做的事'
-    }
-
     function explainStateText(card) {
-      if (card.explain === 'queued') return '排队中，马上就讲…'
-      if (card.explain === 'running') return '正在翻译成人话…'
+      if (card.explain === 'queued') return '排队中…'
+      if (card.explain === 'running') return '正在生成…'
       if (card.explain === 'batched') return card.batchTo ? `已并进第 ${card.batchTo} 步的总结` : '已并进批量总结'
-      if (card.explain === 'failed') return card.explainError || '这次没翻译出来，可以再点一次'
+      if (card.explain === 'failed') return card.explainError || '生成失败'
       return ''
     }
 
@@ -275,7 +269,7 @@ window.__ModuleLoader__.load({
           className: `pl-action${active ? ' is-active' : ''}`,
           onClick,
           disabled: busy,
-          title: '把这条回答的处理过程翻译成大白话',
+          title: '过程讲解',
         },
         h(IconBulb, { size: 13 }),
         h('span', null, busy ? '读取中…' : '过程'),
@@ -333,10 +327,10 @@ window.__ModuleLoader__.load({
             type: 'button',
             className: 'pl-dock-btn',
             onClick: () => void openLatest(sessionId),
-            title: '看看 AI 刚才每一步在干什么（默认只看原文，不花额度）',
+            title: '过程记录',
           },
           h(IconBulb, { size: 12 }),
-          h('span', null, '看过程'),
+          h('span', null, '过程'),
         ),
       )
     }
@@ -435,7 +429,7 @@ window.__ModuleLoader__.load({
                 if (raw.startsWith('p::')) void saveConfig({ activePrompt: raw.slice(3) })
                 else void saveConfig({ activePrompt: '', style: raw.slice(3) })
               },
-              title: '只换"怎么说"，三行格式不变，拆卡片不会坏',
+              title: '只换说法，三行格式不变',
             },
             h(
               'optgroup',
@@ -450,15 +444,14 @@ window.__ModuleLoader__.load({
                 )
               : null,
           ),
-          h(Note, { text: '只换讲解员怎么说，三行格式不变。新手选「给新手」，赶时间选「一句话」。', recommend: '推荐「通俗」' }),
-        ),
+                  ),
         h(
           'div',
           { className: 'pl-row' },
           h('span', { className: 'pl-key' }, '省 token（精炼）'),
           h(
             'label',
-            { className: 'pl-switch', title: '开了：把最近 N 步压成骨架再发（本地规则，不调模型、不花额度）；关着：给尽量完整的原文' },
+            { className: 'pl-switch', title: '最近 N 步先在本机压缩再发送，不调用模型' },
             h('input', {
               type: 'checkbox',
               checked: lens.config.compact === true,
@@ -493,19 +486,14 @@ window.__ModuleLoader__.load({
               String(n),
             ),
           ),
-          h(Note, {
-            text: '省 token 打开过程：最近 N 步先本地精炼再发——同一件事合并成一行、长路径折成 #1、重复的路径只写一次图例。不调模型，不花额度。',
-            recommend: true,
-          }),
-        ),
+                  ),
         h(
           'div',
           { className: 'pl-row' },
           h('span', { className: 'pl-key' }, '提示词'),
           h('button', { type: 'button', className: 'pl-mini', onClick: () => void loadPreview(), disabled: busy }, busy ? '读取中…' : '看当前提示词'),
           h('button', { type: 'button', className: 'pl-mini', onClick: () => openDraft(null) }, panel === 'new' ? '取消' : '新建存档'),
-          h(Note, { text: '点「看当前提示词」能看到真正发出去的两段文本；想改口吻就新建一份存档。三行格式会自动补上。' }),
-        ),
+                  ),
         panel === 'preview' && preview
           ? h(
               'div',
@@ -519,7 +507,7 @@ window.__ModuleLoader__.load({
                     ? ` · 不省是 ${preview.fullChars} 字，实际省了 ${Math.round((1 - preview.chars / preview.fullChars) * 100)}%`
                     : '') +
                   (preview.compact && preview.compactUsed === false
-                    ? ' · 这步内容本来就短，压缩反而更长，这次按原文发的'
+                    ? ' · 未压缩'
                     : ''),
               ),
               h('div', { className: 'pl-pre-label' }, '一、系统提示（角色 + 三行格式）'),
@@ -535,14 +523,14 @@ window.__ModuleLoader__.load({
               { className: 'pl-draft' },
               h('input', {
                 className: 'pl-input',
-                placeholder: '起个名，例如：给老板看 / 只讲结论',
+                placeholder: '名称',
                 value: draftName,
                 onInput: (event) => setDraftName(event.target.value),
               }),
               h('textarea', {
                 className: 'pl-area',
                 rows: 5,
-                placeholder: '写你想让讲解员怎么说话。三行格式（标题 / 在做什么 / 结果）是硬要求，插件会自动补在后面。',
+                placeholder: '自定义提示词（三行格式会自动补上）',
                 value: draftText,
                 onInput: (event) => setDraftText(event.target.value),
               }),
@@ -587,22 +575,8 @@ window.__ModuleLoader__.load({
     }
     // ── 设置区：模型 / 模式 / 自动弹出 ────────────────────────────────────────
 
-    /**
-     * 设置行尾只留一枚「推荐开 / 推荐关」小标签，屏幕干净。
-     * 原来那句解释收进 hover：想弄明白的时候鼠标停一下就能看，不想看就不占地方。
-     */
-    function Note({ text, recommend }) {
-      const label = recommend === true ? '推荐开' : recommend === false ? '推荐关' : String(recommend ?? '')
-      if (!label) return null
-      return h(
-        'span',
-        { className: `pl-rec${recommend === false ? ' is-off' : ''}`, title: text || '' },
-        label,
-      )
-    }
 
     function Settings({ lens }) {
-      const [expanded, setExpanded] = useState(false)
       useEffect(() => {
         void loadModels()
       }, [])
@@ -672,11 +646,7 @@ window.__ModuleLoader__.load({
             },
             '刷新',
           ),
-          h(Note, {
-            text: '决定谁把过程翻成人话。默认跟会话用同一个；单独挑个小模型更省钱，讲得也够用。',
-            recommend: '推荐跟随会话',
-          }),
-        ),
+                  ),
         modelIssue
           ? h('div', { className: 'pl-alert' }, `模型列表：${modelIssue}`)
           : null,
@@ -688,7 +658,7 @@ window.__ModuleLoader__.load({
             'label',
             {
               className: 'pl-switch',
-              title: '关着（默认）：模型直接给三行结论，快、省额度；开着：先自己想一遍再回答，讲得更细，但慢一些、更费额度',
+              title: '开启后先推理再回答，更慢、更费 token',
             },
             h('input', {
               type: 'checkbox',
@@ -699,15 +669,14 @@ window.__ModuleLoader__.load({
             h('span', { className: 'pl-switch-text' }, lens.config.thinking === true ? '开' : '关'),
           ),
 
-          h(Note, { text: '先自己想一遍再回答，讲得更细；代价是慢一点、更费额度。平时关着就够用。', recommend: false }),
-        ),
+                  ),
         h(
           'div',
           { className: 'pl-row' },
           h('span', { className: 'pl-key' }, '自动弹出'),
           h(
             'label',
-            { className: 'pl-switch', title: '开了：出现新一轮就把进度面板自己弹出来；关着（推荐）：只在你点「看过程」或下面的过程按钮时才出现' },
+            { className: 'pl-switch', title: '新一轮出现时自动打开面板' },
             h('input', {
               type: 'checkbox',
               checked: lens.config.autoOpen === true,
@@ -716,8 +685,7 @@ window.__ModuleLoader__.load({
             h('span', { className: 'pl-switch-box' }),
             h('span', { className: 'pl-switch-text' }, lens.config.autoOpen ? '开' : '关'),
           ),
-          h(Note, { text: '一有新一轮就把面板自己弹出来，会打断你；建议关着，想看再点「看过程」。', recommend: false }),
-        ),
+                  ),
         h(
           'div',
           { className: 'pl-row' },
@@ -740,8 +708,7 @@ window.__ModuleLoader__.load({
             title: '打开面板时先摆最近这么多步；想看更多随时可以点「展开全部」',
           }),
           h('span', { className: 'pl-unit' }, '步'),
-          h(Note, { text: '一进来先摆最近这么多步；想看全这一轮，上面点一下「展开」就行。', recommend: '推荐 8' }),
-        ),
+                  ),
         h(
           'div',
           { className: 'pl-row' },
@@ -750,7 +717,7 @@ window.__ModuleLoader__.load({
             'label',
             {
               className: 'pl-switch',
-              title: '开了：平时不吭声，每攒够 N 步才找一次模型，一次把这 N 步合起来讲',
+              title: '每攒够 N 步，一次生成这几步的讲解',
             },
             h('input', {
               type: 'checkbox',
@@ -779,11 +746,7 @@ window.__ModuleLoader__.load({
             title: '每攒够这么多步找一次模型（2~50）',
           }),
           h('span', { className: 'pl-unit' }, '步一讲'),
-          h(Note, {
-            text: '不是少写字，是少找模型：每攒够 N 步才调用一次，一次把这几步合起来讲。10 步只要 2 次调用。',
-            recommend: '推荐 5',
-          }),
-        ),
+                  ),
         h(
           'div',
           { className: 'pl-row' },
@@ -792,7 +755,7 @@ window.__ModuleLoader__.load({
             'label',
             {
               className: 'pl-switch',
-              title: '关着：面板没打开就完全不跑，一分额度不花；开着：面板关着也照样每 N 步讲一次',
+              title: '面板关闭时是否继续生成',
             },
             h('input', {
               type: 'checkbox',
@@ -802,11 +765,7 @@ window.__ModuleLoader__.load({
             h('span', { className: 'pl-switch-box' }),
             h('span', { className: 'pl-switch-text' }, lens.config.batchBackground ? '开' : '关'),
           ),
-          h(Note, {
-            text: '关着：面板没开就不跑，一分不花；开着：面板关着它也会按 N 步攒着讲。',
-            recommend: false,
-          }),
-        ),
+                  ),
         h(
           'div',
           { className: 'pl-row' },
@@ -815,7 +774,7 @@ window.__ModuleLoader__.load({
             'label',
             {
               className: 'pl-switch',
-              title: '开了：每次你打开面板，自动把最近 N 步翻译成人话（花额度）；关着：一打开只看原文，一分不花',
+              title: '打开面板时自动生成最近 N 步',
             },
             h('input', {
               type: 'checkbox',
@@ -843,8 +802,7 @@ window.__ModuleLoader__.load({
             title: '打开面板时自动讲最近这么多步',
           }),
           h('span', { className: 'pl-unit' }, '步'),
-          h(Note, { text: '一打开面板就自动把最近几步翻成人话，会花额度；想一分不花就关着，手动点「讲这步」。', recommend: false }),
-        ),
+                  ),
         h(
           'div',
           { className: 'pl-row' },
@@ -853,7 +811,7 @@ window.__ModuleLoader__.load({
             'label',
             {
               className: 'pl-switch',
-              title: '开了：只要面板开着、停在过程页，每出现新的一步就自动讲这一步；一关面板就停，后台不会花额度',
+              title: '面板打开时自动生成新步骤',
             },
             h('input', {
               type: 'checkbox',
@@ -863,44 +821,8 @@ window.__ModuleLoader__.load({
             h('span', { className: 'pl-switch-box' }),
             h('span', { className: 'pl-switch-text' }, lens.config.liveExplain ? '开' : '关'),
           ),
-          h(Note, { text: '面板停在过程页时来一步讲一步，不用点；关掉面板或切到设置页就停，也不会把之前的老步骤翻出来重讲。', recommend: false }),
-        ),
+                  ),
         h(PromptStudio, { lens }),
-        h(
-          'button',
-          {
-            type: 'button',
-            className: 'pl-more',
-            onClick: () => setExpanded((value) => !value),
-          },
-          expanded ? '收起说明' : '这些开关是干嘛的？',
-        ),
-        expanded
-          ? h(
-              'div',
-              { className: 'pl-hint' },
-              h('p', null, '· 讲解模型：专门用来把过程翻译成人话。默认跟会话用同一个；换一个小模型可以更省钱。'),
-              h('p', null, '· 原文：每张卡上面有个「展开原文」，点开能看到它这一步的完整思考、完整参数、完整返回和它说的话，一分额度都不花。'),
-              h('p', null, '· 打开时显示 N 步：面板一进来先摆最近 N 步（默认 8），上面有按钮「展开这一轮全部」，不会漏步也不至于一屏刷不完。'),
-              h('p', null, '· 读的时候不会被打断：你往上翻、或者点开「展开原文」，面板就把当前这几步钉住，新步骤只在下面排队；滚回底下就自动跟过去。'),
-              h('p', null, '· 讲这步 / 全部讲一遍：点哪个讲哪个，点一次算一次模型调用，讲到过的会标「讲完了」。'),
-        h(
-          'p',
-          null,
-          '· 重新讲一遍：讲过的也能再讲，还能临时换一份提示词（内置风格或你自己存的），只影响这一次，设置里的风格不会被改。',
-        ),
-              h('p', null, '· 省 token++：这才是「每 N 步发一次」。开着以后平时不吭声，每攒够 N 步才找一次模型，一次把这 N 步合起来讲；10 步只花 2 次调用，比一步一步单讲省得多。'),
-              h('p', null, '· 后台跑：省 token++ 的附带选项。关着 = 只有面板打开时才跑（一关面板就停，一分不花）；开着 = 面板关着它也照常按 N 步攒着讲。'),
-              h('p', null, '· 和省 token++ 打岔：「打开时自动讲」「开着就自动讲」是「一步一讲」，跟「攒够再一次」相反。所以开着省 token++ 时，这两个自动讲会直接让路，不花那份钱。'),
-              h('p', null, '· 打开时自动讲：开了以后每次打开面板，自动把最近 N 步（默认 3）翻成人话概要；不想要就关掉，一打开只看原文。'),
-              h('p', null, '· 开着就自动讲：面板停在过程页时，来一步就自动讲一步，不用点；关掉面板或切到设置页立刻停，之前的老步骤不会被翻出来重讲。'),
-              h('p', null, '· 自动弹出（默认关、也建议关）：开了会自己弹面板打断你；关着就等你点「看过程」。'),
-              h('p', null, '· 总结风格：决定讲解员怎么说话——通俗、专业、一句话、给新手；只换说法，不换三行格式。'),
-              h('p', null, '· 提示词：「看当前提示词」能看到真正发出去的两段文本；「新建存档」可以写自己的要求并起名，之后在风格下拉里随时切回。'),
-              h('p', null, '· 省 token（精炼）：开了以后，最近 N 步先在你本机精炼成骨架（同一件事合并、长路径折成 #1）再发给模型，额度省很多，全程不调模型、不花额度。'),
-              chosen ? h('p', null, `· 现在用的是：${chosen.provider.name} / ${chosen.name}`) : null,
-            )
-          : null,
       )
     }
 
@@ -959,7 +881,7 @@ window.__ModuleLoader__.load({
         )
       }
       if (body.length === 0) {
-        body.push(h('div', { key: 'none', className: 'pl-raw-row is-dim' }, '这一步没有调用工具，只是模型自己在想/在写。'))
+        body.push(h('div', { key: 'none', className: 'pl-raw-row is-dim' }, '没有调用工具'))
       }
       return h(
         'div',
@@ -1060,9 +982,9 @@ window.__ModuleLoader__.load({
                 className: `pl-mini${done ? ' is-done' : ''}`,
                 onClick: () => onExplain?.(card.step),
                 disabled: busy || done,
-                title: done ? '这一步已经讲过了' : '只讲这一步（点一次 = 一次模型调用）',
+                title: done ? '已生成' : '生成本步讲解',
               },
-              busy ? '正在讲…' : done ? '讲完了' : card.explain === 'failed' ? '再讲一次' : card.explain === 'batched' ? '单独讲这步' : '讲这步',
+              busy ? '正在生成…' : done ? '已生成' : card.explain === 'failed' ? '重试' : card.explain === 'batched' ? '单独生成' : '生成讲解',
             ),
             // 重新讲一遍：已经讲过的也能再讲，还能临时换一份提示词
             h(
@@ -1074,7 +996,7 @@ window.__ModuleLoader__.load({
                 disabled: busy,
                 title: '用另一份提示词把这一步再讲一次（点一次 = 一次模型调用）',
               },
-              redoing ? '重讲中…' : '重新讲一遍',
+              redoing ? '生成中…' : '重新生成',
             ),
           ),
         ),
@@ -1082,7 +1004,7 @@ window.__ModuleLoader__.load({
           ? h(
               'div',
               { className: 'pl-menu' },
-              h('div', { className: 'pl-menu-head' }, '换一份提示词，重讲这一步'),
+              h('div', { className: 'pl-menu-head' }, '选择提示词'),
               h(
                 'button',
                 {
@@ -1122,8 +1044,7 @@ window.__ModuleLoader__.load({
                   item.label,
                 ),
               ),
-              h('div', { className: 'pl-menu-foot' }, '选哪份就用哪份讲这一次；设置里的风格不会被改掉。'),
-            )
+              )
           : null,
       )
     }
@@ -1133,9 +1054,9 @@ window.__ModuleLoader__.load({
     // ── 外观：主题切换（照抄宿主风格 + 壁纸插件的玻璃变量） ──────────────────
 
     const THEME_CHOICES = [
-      { id: 'auto', label: '跟随壁纸', hint: '跟桌面深浅色和壁纸插件同步，壁纸换色这里一起换' },
-      { id: 'light', label: '浅色', hint: '固定白底，不看系统也不看壁纸' },
-      { id: 'dark', label: '深色', hint: '固定深底，夜里看着不刺眼' },
+      { id: 'auto', label: '跟随', hint: '' },
+      { id: 'light', label: '浅色', hint: '' },
+      { id: 'dark', label: '深色', hint: '' },
     ]
 
     function themeMode(value) {
@@ -1171,12 +1092,7 @@ window.__ModuleLoader__.load({
             ),
           ),
         ),
-        h('div', { className: 'pl-theme-hint' }, current.hint),
-        h(
-          'div',
-          { className: 'pl-theme-scope' },
-          '只换这个面板的底色和字色，不动整个界面；想换整个界面请去 DSH 自己的外观设置。',
-        ),
+        current.hint ? h('div', { className: 'pl-theme-hint' }, current.hint) : null,
       )
     }
 
@@ -1185,6 +1101,101 @@ window.__ModuleLoader__.load({
       const [retrying, setRetrying] = useState(false)
       const showAllSteps = lens.config.allSteps === true
       const bodyRef = useRef(null)
+      const drawerRef = useRef(null)
+
+      /** 主题：手动档写死调色板；跟随档读宿主实际底色（系统浅色、壁纸插件都能跟上）。
+       *  直接写在元素上并带 important —— 外部样式表再晚注入也压不住。 */
+      useEffect(() => {
+        const el = drawerRef.current
+        if (!el) return undefined
+        const NAMES = [
+          '--pl-skin',
+          '--pl-ink',
+          '--dsw-alias-bg-overlay',
+          '--dsw-alias-bg-layer-1',
+          '--dsw-alias-bg-layer-2',
+          '--dsw-alias-bg-layer-3',
+          '--dsw-alias-label-primary',
+          '--dsw-alias-label-secondary',
+          '--dsw-alias-border-l1',
+          '--dsw-alias-border-l2',
+          '--we-blur',
+        ]
+        const LIGHT = {
+          '--pl-skin': '#f7f8fb',
+          '--pl-ink': '#1b1c21',
+          '--dsw-alias-bg-overlay': '#f7f8fb',
+          '--dsw-alias-bg-layer-1': 'rgba(18,20,26,.045)',
+          '--dsw-alias-bg-layer-2': 'rgba(18,20,26,.08)',
+          '--dsw-alias-bg-layer-3': 'rgba(18,20,26,.12)',
+          '--dsw-alias-label-primary': '#1b1c21',
+          '--dsw-alias-label-secondary': 'rgba(27,28,33,.62)',
+          '--dsw-alias-border-l1': 'rgba(18,20,26,.12)',
+          '--dsw-alias-border-l2': 'rgba(18,20,26,.20)',
+          '--we-blur': '0px',
+          '--dsw-alias-brand-primary': '#3b6fe0',
+        }
+        const DARK = {
+          '--pl-skin': '#15161b',
+          '--pl-ink': '#e8e9ef',
+          '--dsw-alias-bg-overlay': '#15161b',
+          '--dsw-alias-bg-layer-1': 'rgba(255,255,255,.065)',
+          '--dsw-alias-bg-layer-2': 'rgba(255,255,255,.10)',
+          '--dsw-alias-bg-layer-3': 'rgba(255,255,255,.14)',
+          '--dsw-alias-label-primary': '#e8e9ef',
+          '--dsw-alias-label-secondary': 'rgba(232,233,239,.66)',
+          '--dsw-alias-border-l1': 'rgba(255,255,255,.10)',
+          '--dsw-alias-border-l2': 'rgba(255,255,255,.18)',
+          '--we-blur': '16px',
+          '--dsw-alias-brand-primary': '#7aa2ff',
+        }
+        const paint = (map, blur) => {
+          for (const [name, value] of Object.entries(map)) el.style.setProperty(name, value, 'important')
+          el.style.setProperty('background', map['--pl-skin'], 'important')
+          el.style.setProperty('color', map['--pl-ink'], 'important')
+          el.style.setProperty('-webkit-backdrop-filter', blur, 'important')
+          el.style.setProperty('backdrop-filter', blur, 'important')
+        }
+        const sample = () => {
+          const nodes = [document.body, document.documentElement, el.parentElement]
+          for (const node of nodes) {
+            if (!node) continue
+            const hit = /rgba?\(([^)]+)\)/.exec(String(getComputedStyle(node).backgroundColor || ''))
+            if (!hit) continue
+            const parts = hit[1].split(',').map((item) => Number(item.trim()))
+            if (parts.length < 3 || Number.isNaN(parts[0])) continue
+            if (parts.length > 3 && parts[3] < 0.2) continue
+            const lum = (0.2126 * parts[0] + 0.7152 * parts[1] + 0.0722 * parts[2]) / 255
+            return lum > 0.55 ? 'light' : 'dark'
+          }
+          return window.matchMedia?.('(prefers-color-scheme: light)')?.matches ? 'light' : 'dark'
+        }
+        const mode = themeMode(lens.config.theme)
+        const CLEAR = 'none'
+        const FROST = 'blur(16px) saturate(1.2)'
+        if (mode === 'light') {
+          paint(LIGHT, CLEAR)
+          return undefined
+        }
+        if (mode === 'dark') {
+          paint(DARK, FROST)
+          return undefined
+        }
+        const applyAuto = () => {
+          const light = sample() === 'light'
+          paint(light ? LIGHT : DARK, light ? CLEAR : FROST)
+        }
+        applyAuto()
+        // 宿主换肤是异步的（壁纸插件还会改 CSS 变量），过一会儿再量一次
+        const timer = setTimeout(applyAuto, 500)
+        const media = window.matchMedia?.('(prefers-color-scheme: light)')
+        const onChange = () => applyAuto()
+        media?.addEventListener?.('change', onChange)
+        return () => {
+          clearTimeout(timer)
+          media?.removeEventListener?.('change', onChange)
+        }
+      }, [lens.config.theme, lens.open])
       const paneRef = useRef(null)
       const pinnedRef = useRef(true)
       /** 同一轮只自动讲一次，避免快照每刷新一遍就再烧一次额度 */
@@ -1253,7 +1264,7 @@ window.__ModuleLoader__.load({
         source.addEventListener('turn', onTurn)
         source.onerror = () => {
           if (!alive) return
-          setState({ notice: '连接断了一下，正在自动重连…' })
+          setState({ notice: '正在重连…' })
         }
         return () => {
           alive = false
@@ -1428,6 +1439,7 @@ window.__ModuleLoader__.load({
         h(
           'aside',
           {
+            ref: drawerRef,
             className: 'pl-drawer',
             role: 'dialog',
             'aria-label': '过程讲解',
@@ -1440,7 +1452,7 @@ window.__ModuleLoader__.load({
             h(
               'span',
               { className: 'pl-head-title' },
-              lens.tab === 'settings' ? '过程面板设置' : '这一步是怎么来的',
+              lens.tab === 'settings' ? '设置' : '过程讲解',
             ),
             h(
               'button',
@@ -1487,25 +1499,7 @@ window.__ModuleLoader__.load({
                 { className: 'pl-frag' },
           h(
             'div',
-            { className: 'pl-sub' },
-            snapshot?.request
-              ? h('span', { className: 'pl-request' }, `你让它做的：${snapshot.request}`)
-              : h('span', { className: 'pl-request is-dim' }, '这一轮你让它做的事'),
-          ),
-          h(
-            'div',
             { className: 'pl-bar' },
-            h(
-              'span',
-              { className: 'pl-bar-text' },
-              Number(lens.config.batchEvery) >= 2
-                ? `已开「省 token++」：每 ${Math.min(50, Math.max(2, Math.round(Number(lens.config.batchEvery) || 5)))} 步合起来讲一次（一次调用讲好几步）`
-                : lens.config.liveExplain === true && lens.tab !== 'settings'
-                ? '已开「开着就自动讲」：面板开着的时候来一步讲一步（花额度），关掉面板就停'
-                : lens.config.autoSummarize === true
-                  ? `已开「打开时自动讲最近 ${Math.min(20, Math.max(1, Math.round(Number(lens.config.autoSummarizeCount) || 3)))} 步」：每次打开面板都会自动生成这些概要（花额度）`
-                  : '',
-            ),
             steps.length > 1
               ? h(
                   'div',
@@ -1545,7 +1539,7 @@ window.__ModuleLoader__.load({
                         ? '这一轮的每一步都讲过了'
                         : `把还没讲过的 ${pendingCount} 步挨个讲一遍，每步算一次模型调用`,
                   },
-                  retrying ? '排队讲…' : pendingCount === 0 ? '这一轮都讲完了' : `全部讲一遍（${pendingCount} 步）`,
+                  retrying ? '排队中…' : pendingCount === 0 ? '本轮已完成' : `全部生成（${pendingCount} 步）`,
                 )
               : null,
           ),
@@ -1556,13 +1550,13 @@ window.__ModuleLoader__.load({
             h(
               'div',
               { className: 'pl-cost' },
-              '讲解会调模型、花 token：建议用免费或低价模型；高价模型不建议开「自动讲」。',
+              '讲解会调用模型、消耗 token。',
             ),
             !snapshot && !lens.notice
               ? h('div', { className: 'pl-empty' }, '正在读取过程记录…')
               : null,
             snapshot && steps.length === 0
-              ? h('div', { className: 'pl-empty' }, '它才刚开始，暂时还没有能讲的东西。')
+              ? h('div', { className: 'pl-empty' }, '暂无步骤')
               : null,
             hiddenCount > 0
               ? h(
@@ -1606,10 +1600,7 @@ window.__ModuleLoader__.load({
                 )
               : null,
             snapshot && !finished && steps.length > 0
-              ? h('div', { className: 'pl-running' }, '它还在往下做，这里会接着更新…')
-              : null,
-            snapshot && finished && steps.length > 0
-              ? h('div', { className: 'pl-done' }, '这一轮做完了。')
+              ? h('div', { className: 'pl-running' }, '进行中…')
               : null,
           ),
           h(
@@ -1666,7 +1657,6 @@ window.__ModuleLoader__.load({
 .pl-key { flex: 0 0 62px; font-size: 11px; opacity: .6; }
 .pl-select { flex: 1 1 auto; min-width: 0; font: inherit; font-size: 11.5px; padding: 3px 5px; border-radius: 7px; border: 1px solid var(--dsw-alias-border-l2, rgba(127,127,127,.35)); background: var(--dsw-alias-bg-layer-1, Canvas); color: var(--dsw-alias-label-primary, CanvasText); }
 .pl-bar { display: flex; align-items: center; gap: 8px; padding: 0 12px 7px; }
-.pl-bar-text { flex: 1 1 auto; font-size: 11px; opacity: .55; }
 .pl-mini { flex: 0 0 auto; font: inherit; font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid rgba(127,127,127,.32); background: transparent; color: inherit; opacity: .8; cursor: pointer; white-space: nowrap; }
 .pl-mini:hover { background: rgba(127,127,127,.12); opacity: 1; }
 .pl-mini:disabled { opacity: .4; cursor: default; }
@@ -1802,7 +1792,7 @@ window.__ModuleLoader__.load({
 
 /* ── 主题：三档，各自一整套调色板（浅色/深色不再引用宿主或壁纸插件的颜色） ── */
 .pl-drawer {
-  --pl-skin: var(--we-panel-color, var(--dsw-alias-bg-overlay, #1b1c22));
+  --pl-skin: var(--we-panel-color, var(--dsw-alias-bg-overlay, Canvas));
   --pl-ink: var(--dsw-alias-label-primary, #e8e9ef);
   background: var(--pl-skin);
   color: var(--pl-ink);
@@ -1891,7 +1881,6 @@ window.__ModuleLoader__.load({
 .pl-drawer[data-pl-theme="light"] .pl-body::-webkit-scrollbar-thumb,
 .pl-drawer[data-pl-theme="light"] .pl-pane::-webkit-scrollbar-thumb { background: rgba(18,20,26,.22); }
 .pl-drawer[data-pl-theme="light"] ::selection { background: rgba(59,111,224,.22); }
-.pl-theme-scope { font-size: 11px; opacity: .5; line-height: 1.45; }
 
 /* 花销提示：常驻主页一句话，讲清会花额度、建议用便宜模型 */
 .pl-cost { flex: none; margin: 2px 0 9px; padding: 7px 9px; border-radius: 9px; font-size: 11.5px; line-height: 1.5; border: 1px dashed rgba(127,127,127,.34); background: rgba(127,127,127,.06); opacity: .85; }
