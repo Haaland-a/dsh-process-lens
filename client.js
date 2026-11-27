@@ -156,7 +156,7 @@ window.__ModuleLoader__.load({
         }
         setState({ notice: null })
       } catch (error) {
-        setState({ notice: `讲不了：${error?.message ?? error}` })
+        setState({ notice: `生成不了：${error?.message ?? error}` })
       }
     }
 
@@ -620,7 +620,7 @@ window.__ModuleLoader__.load({
                 const split = raw.indexOf('::')
                 void saveConfig({ provider: raw.slice(0, split), model: raw.slice(split + 2) })
               },
-              title: '只影响讲解，不影响会话本身用的模型',
+              title: '只影响讲解模型，不影响会话模型',
             },
             h('option', { value: '' }, followLabel),
             ...providers.map((provider) =>
@@ -745,7 +745,7 @@ window.__ModuleLoader__.load({
             },
             title: '每攒够这么多步找一次模型（2~50）',
           }),
-          h('span', { className: 'pl-unit' }, '步一讲'),
+          h('span', { className: 'pl-unit' }, '步一次'),
                   ),
         h(
           'div',
@@ -769,7 +769,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'pl-row' },
-          h('span', { className: 'pl-key' }, '打开时自动讲'),
+          h('span', { className: 'pl-key' }, '打开时自动生成'),
           h(
             'label',
             {
@@ -799,14 +799,14 @@ window.__ModuleLoader__.load({
             onKeyDown: (event) => {
               if (event.key === 'Enter') event.target.blur()
             },
-            title: '打开面板时自动讲最近这么多步',
+            title: '打开面板时自动生成最近 N 步',
           }),
           h('span', { className: 'pl-unit' }, '步'),
                   ),
         h(
           'div',
           { className: 'pl-row' },
-          h('span', { className: 'pl-key' }, '开着就自动讲'),
+          h('span', { className: 'pl-key' }, '开着时逐步生成'),
           h(
             'label',
             {
@@ -994,7 +994,7 @@ window.__ModuleLoader__.load({
                 className: 'pl-mini pl-mini-ghost',
                 onClick: () => setPicking((prev) => !prev),
                 disabled: busy,
-                title: '用另一份提示词把这一步再讲一次（点一次 = 一次模型调用）',
+                title: '选另一份提示词重新生成这一步',
               },
               redoing ? '生成中…' : '重新生成',
             ),
@@ -1536,8 +1536,8 @@ window.__ModuleLoader__.load({
                     disabled: retrying || lens.turn === null || pendingCount === 0,
                     title:
                       pendingCount === 0
-                        ? '这一轮的每一步都讲过了'
-                        : `把还没讲过的 ${pendingCount} 步挨个讲一遍，每步算一次模型调用`,
+                        ? '本轮都已生成'
+                        : `逐步生成剩余 ${pendingCount} 步`,
                   },
                   retrying ? '排队中…' : pendingCount === 0 ? '本轮已完成' : `全部生成（${pendingCount} 步）`,
                 )
