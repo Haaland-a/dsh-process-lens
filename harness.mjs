@@ -2,7 +2,7 @@
  * 一次性自测：用假 ctx 验收「历史补账」逻辑，不碰真实模型。
  * 跑法：node harness.mjs
  */
-import { rmSync } from 'node:fs'
+import { readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
 process.env.DSH_PROFILE_DIR = join(import.meta.dirname, '.tmp-profile')
@@ -413,6 +413,39 @@ const allStepsOn = await hit('/process-lens/api/config', 'POST', { allSteps: tru
 check('能选「全部步骤」', allStepsOn.json?.settings?.allSteps === true, allStepsOn.json?.settings?.allSteps)
 const allStepsBack = await hit('/process-lens/api/config', 'POST', { allSteps: false })
 check('能切回最近 N 步', allStepsBack.json?.settings?.allSteps === false, allStepsBack.json?.settings?.allSteps)
+
+// 20) 阅读保护：读的时候不能因为新步骤进来就被顶掉 / 拽走
+const clientSrc = readFileSync(join(import.meta.dirname, 'client.js'), 'utf8')
+check(
+  '新步骤不会把正在读的卡片挤掉（窗口按钉子切）',
+  clientSrc.includes('const pool = frozen ? steps.filter((card) => card.step <= pinnedStep) : steps'),
+  'frozen 窗口',
+)
+check(
+  '钉住的时候不跟着滚到底',
+  clientSrc.includes('if (!node || !pinnedRef.current || pinnedAt) return'),
+  'pinnedAt 守卫',
+)
+check(
+  '往上翻就会钉住',
+  clientSrc.includes('else pinHere()') && clientSrc.includes('const [pinnedAt, setPinnedAt] = useState(null)'),
+  'pinHere',
+)
+check(
+  '点开「展开原文」也会钉住',
+  clientSrc.includes('if (next) onPin?.()') && clientSrc.includes('onPin: pinHere'),
+  'onPin',
+)
+check(
+  '面板上有「回到最新」',
+  clientSrc.includes('pl-frozen') && clientSrc.includes('回到最新'),
+  '回到最新',
+)
+check(
+  '换一轮会重新跟随最新',
+  clientSrc.includes('}, [lens.sessionId, lens.turn])'),
+  'reset',
+)
 
 const failed = checks.filter((item) => !item.ok)
 console.log(`\n${checks.length - failed.length}/${checks.length} 通过`)

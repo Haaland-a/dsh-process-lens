@@ -791,6 +791,7 @@ window.__ModuleLoader__.load({
               h('p', null, '· 讲解模型：专门用来把过程翻译成人话。默认跟会话用同一个；换一个小模型可以更省钱。'),
               h('p', null, '· 原文：每张卡上面有个「展开原文」，点开能看到它这一步的完整思考、完整参数、完整返回和它说的话，一分额度都不花。'),
               h('p', null, '· 打开时显示 N 步：面板一进来先摆最近 N 步（默认 8），上面有按钮「展开这一轮全部」，不会漏步也不至于一屏刷不完。'),
+              h('p', null, '· 读的时候不会被打断：你往上翻、或者点开「展开原文」，面板就把当前这几步钉住，新步骤只在下面排队，点「回到最新」才跟过去。'),
               h('p', null, '· 讲这步 / 全部讲一遍：点哪个讲哪个，点一次算一次模型调用，讲到过的会标「讲完了」。'),
               h('p', null, '· 打开时自动讲：开了以后每次打开面板，自动把最近 N 步（默认 3）翻成人话概要；不想要就关掉，一打开只看原文。'),
               h('p', null, '· 自动弹出：出现新一轮就把面板摊出来（只显示原文）；关着就等你点「看过程」。'),
@@ -812,9 +813,15 @@ window.__ModuleLoader__.load({
       return size
     }
 
-    function RawBlock({ card }) {
+    function RawBlock({ card, onPin }) {
       const raw = card.raw ?? { actions: [], answer: '', thinking: '' }
       const [open, setOpen] = useState(false)
+      /** 展开原文就说明"我要在这儿读了"：通知外层把这处钉住，别让新步骤挤走 */
+      const toggle = () => {
+        const next = !open
+        setOpen(next)
+        if (next) onPin?.()
+      }
       const size = rawSize(raw)
       const body = []
       if (raw.thinking) {
@@ -862,7 +869,7 @@ window.__ModuleLoader__.load({
           {
             type: 'button',
             className: 'pl-raw-toggle',
-            onClick: () => setOpen((value) => !value),
+            onClick: toggle,
             title: '看它这一步到底做了什么（不花额度）',
           },
           h('span', { className: 'pl-raw-caret' }, open ? '▾' : '▸'),
@@ -876,7 +883,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function Card({ card, onExplain }) {
+    function Card({ card, onExplain, onPin }) {
       const pending = card.status === 'running'
       const busy = card.explain === 'queued' || card.explain === 'running'
       const done = card.explain === 'done'
@@ -895,7 +902,7 @@ window.__ModuleLoader__.load({
           pending ? h('span', { className: 'pl-spinner', 'aria-hidden': true }) : null,
         ),
         // 原文在上：不花额度也能看清这一步到底做了什么
-        h(RawBlock, { card }),
+        h(RawBlock, { card, onPin }),
         lines.length
           ? h(
               'div',
@@ -1003,6 +1010,11 @@ window.__ModuleLoader__.load({
       const pinnedRef = useRef(true)
       /** 同一轮只自动讲一次，避免快照每刷新一遍就再烧一次额度 */
       const autoDoneRef = useRef('')
+      /**
+       * 阅读保护：你往上翻、或者点开「展开原文」，就把"此刻最新的那一步"钉住。
+       * 之后进来的步骤只在下面排队，不挤掉上面的卡片、不把滚动条拽走。
+       */
+      const [pinnedAt, setPinnedAt] = useState(null)
 
       useEffect(() => {
         void loadConfig()
@@ -1071,12 +1083,18 @@ window.__ModuleLoader__.load({
         }
       }, [lens.open, lens.sessionId, lens.turn])
 
-      // 新卡片进来时，如果用户没往上翻，就贴着底部
+      // 换了一轮 / 换了一个会话，重新按"跟随最新"开始
+      useEffect(() => {
+        setPinnedAt(null)
+        pinnedRef.current = true
+      }, [lens.sessionId, lens.turn])
+
+      // 新卡片进来时，只有"没钉住 + 本来就贴着底部"才跟着往下滑
       useEffect(() => {
         const node = bodyRef.current
-        if (!node || !pinnedRef.current) return
+        if (!node || !pinnedRef.current || pinnedAt) return
         node.scrollTop = node.scrollHeight
-      }, [lens.snapshot])
+      }, [lens.snapshot, pinnedAt])
 
       // 「打开时自动讲最近 N 步」：只有用户真的打开面板才触发，同一轮只触发一次
       useEffect(() => {
@@ -1101,10 +1119,36 @@ window.__ModuleLoader__.load({
         void explainSteps(lens.sessionId, lens.turn, targets)
       }, [lens.open, lens.sessionId, lens.turn, lens.snapshot, lens.snapshotKey, lens.config.autoSummarize, lens.config.autoSummarizeCount])
 
+      const turnKey = `${state.sessionId ?? ''}:${state.turn ?? ''}`
+
+      /** 钉住"此刻最新一步"：之后新来的步骤编号都排在它后面，窗口原地不动 */
+      const pinHere = useCallback(() => {
+        setPinnedAt((prev) => {
+          if (prev && prev.key === turnKey) return prev
+          const cards = state.snapshotKey === turnKey ? state.snapshot?.steps ?? [] : []
+          const last = cards.length ? cards[cards.length - 1].step : 0
+          return last > 0 ? { key: turnKey, step: last } : prev
+        })
+      }, [turnKey])
+
+      /** 回到最新：解钉 + 贴底 */
+      const jumpLatest = () => {
+        setPinnedAt(null)
+        pinnedRef.current = true
+        requestAnimationFrame(() => {
+          const node = bodyRef.current
+          if (node) node.scrollTop = node.scrollHeight
+        })
+      }
+
       const onScroll = () => {
         const node = bodyRef.current
         if (!node) return
-        pinnedRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 60
+        const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 60
+        pinnedRef.current = atBottom
+        // 往上翻 = 在认真读；贴底 = 想跟着看新的
+        if (atBottom) setPinnedAt(null)
+        else pinHere()
       }
 
       const close = () => setState({ open: false, dismissedTurn: state.turn ?? null })
@@ -1146,9 +1190,14 @@ window.__ModuleLoader__.load({
       const pendingCount = steps.filter((card) => card.explain !== 'done').length
       // 「打开时显示最近 N 步」：N 从设置里来，0 表示一进来就全给
       const recent = Number.isFinite(Number(lens.config.recent)) ? Number(lens.config.recent) : 8
-      const canCollapse = !showAllSteps && recent > 0 && steps.length > recent
-      const visible = canCollapse ? steps.slice(-recent) : steps
-      const hiddenCount = steps.length - visible.length
+      const pinnedStep = pinnedAt && pinnedAt.key === `${lens.sessionId ?? ''}:${lens.turn ?? ''}` ? pinnedAt.step : null
+      const frozen = pinnedStep !== null
+      // 钉住的时候只摆到钉子那一步：新步骤在下面排队，不会把上面的卡片顶掉
+      const pool = frozen ? steps.filter((card) => card.step <= pinnedStep) : steps
+      const queued = frozen ? steps.length - pool.length : 0
+      const canCollapse = !showAllSteps && recent > 0 && pool.length > recent
+      const visible = canCollapse ? pool.slice(-recent) : pool
+      const hiddenCount = pool.length - visible.length
 
       return h(
         'div',
@@ -1277,6 +1326,29 @@ window.__ModuleLoader__.load({
             'div',
             { className: 'pl-body', ref: bodyRef, onScroll },
             lens.notice ? h('div', { className: 'pl-alert' }, lens.notice) : null,
+            frozen
+              ? h(
+                  'div',
+                  { className: 'pl-frozen', role: 'status' },
+                  h(
+                    'span',
+                    { className: 'pl-frozen-text' },
+                    queued > 0
+                      ? `停在你读到的地方，后面又做了 ${queued} 步——没打断你`
+                      : '停在你读到的地方，新步骤不会把上面的内容挤掉',
+                  ),
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: 'pl-frozen-btn',
+                      onClick: jumpLatest,
+                      title: '解钉并跳到最下面',
+                    },
+                    '回到最新',
+                  ),
+                )
+              : null,
             !snapshot && !lens.notice
               ? h('div', { className: 'pl-empty' }, '正在读取过程记录…')
               : null,
@@ -1299,6 +1371,7 @@ window.__ModuleLoader__.load({
               h(Card, {
                 key: card.step,
                 card,
+                onPin: pinHere,
                 onExplain: (step) => void explainSteps(lens.sessionId, lens.turn, [step]),
               }),
             ),
@@ -1446,6 +1519,10 @@ window.__ModuleLoader__.load({
 .pl-rec.is-off { background: rgba(120,130,150,.16); color: #6b7280; }
 .pl-more-steps { align-self: stretch; font: inherit; font-size: 11.5px; padding: 6px 10px; border-radius: 9px; border: 1px dashed rgba(127,127,127,.34); background: transparent; color: inherit; opacity: .75; cursor: pointer; }
 .pl-more-steps:hover { background: rgba(127,127,127,.1); opacity: 1; }
+.pl-frozen { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 8px; margin-bottom: 8px; padding: 5px 9px; border-radius: 9px; border: 1px solid rgba(214,150,50,.34); background: color-mix(in srgb, var(--pl-skin, Canvas) 88%, rgba(214,150,50,.16)); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.pl-frozen-text { flex: 1 1 auto; font-size: 11px; line-height: 1.5; color: #a5761a; }
+.pl-frozen-btn { flex: none; font: inherit; font-size: 11px; padding: 2px 9px; border-radius: 999px; border: 1px solid rgba(214,150,50,.45); background: transparent; color: inherit; cursor: pointer; }
+.pl-frozen-btn:hover { background: rgba(214,150,50,.16); }
 .pl-more-steps.is-collapse { border-style: solid; }
 .pl-modeseg { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border-radius: 9px; border: 1px solid rgba(127,127,127,.28); background: rgba(127,127,127,.06); }
 .pl-modebtn { font: inherit; font-size: 11.5px; padding: 3px 9px; border: 0; border-radius: 7px; background: transparent; color: inherit; opacity: .7; cursor: pointer; }

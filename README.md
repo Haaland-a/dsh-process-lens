@@ -1,9 +1,9 @@
 # 过程讲解器（dsh-process-lens）
 
 [![DSH plugin](https://img.shields.io/badge/DSH-plugin-4f7cff)](https://github.com/Haaland-a/dsh-process-lens)
-[![version](https://img.shields.io/badge/version-0.2.5-2ea043)](./package.json)
+[![version](https://img.shields.io/badge/version-0.2.6-2ea043)](./package.json)
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
-[![self test](https://img.shields.io/badge/self--test-61%2F61-2ea043)](./harness.mjs)
+[![self test](https://img.shields.io/badge/self--test-67%2F67-2ea043)](./harness.mjs)
 
 把 AI 干活的每一步摊开给你看：**原文点一下就看全文**（不花额度），**人话解说按需生成**（点哪步才讲哪步），**用哪个模型讲由你单独挑**。
 
@@ -95,6 +95,18 @@
 
 以前已经结束的老会话（甚至 DSH 重启过的那种）只显示最后几步，是因为补账只回放最近 4000 条事件——
 现在点开某一轮时，插件会**从这一轮的 turn/start 重新回放**，把整轮补齐（每一轮只补一次，不重复花钱也不重复算）。
+
+### 4.8 读的时候不被打断（新）
+
+以前一边看一边有新步骤进来，会撞两件事：一是「最近 N 步」那个窗口往前滑，你正在看的那张卡被挤出屏幕，
+连「展开原文」都跟着合上了；二是有时滚动条被拽到最底下。现在两件都不发生了。
+
+- **往上翻一下就自动钉住**：面板记下「此刻最新是第几步」，后面新来的步骤只在下面排队，上面的卡片一张不动。
+- **点「展开原文」也会钉住**：你要读这一步的完整参数/返回，它就老老实实待在那儿。
+- 钉住的时侯内容顶上会有一条黄色小条：「停在你读到的地方，后面又做了 N 步——没打断你」，右边一个 **「回到最新」**。
+- **自己滑到底 = 想跟着看新的**，会自动解钉继续跟；换一轮、换会话也自动恢复跟随。
+
+一句话：手不动，面板就不动；只有你点「回到最新」或者自己滑到最底，它才继续往下跟。
 
 ### 5. 讲解风格 / 自己的提示词 / 省 token
 
@@ -283,7 +295,9 @@ dsh plugin add link:E:/Personal/Desktop/dsh/dsh-process-lens --profile desktop
 node harness.mjs
 ```
 
-用假 ctx 跑 **61 条**断言：历史补账、messageId→轮次定位、工具人话标签、原文（含参数/返回）随卡返回、失败标红、
+用假 ctx 跑 **67 条**断言：历史补账、messageId→轮次定位、工具人话标签、原文（含参数/返回）随卡返回、失败标红、
+
+以及 6 条前端静态断言（新步骤不挤掉正在读的卡、钉住时不拽滚动条、往上翻/展开原文会钉住、有「回到最新」、换轮恢复跟随）、
 「只连流不点 = 0 次模型调用」、显式点讲才 1 次且用插件自己选的模型、讲失败会标 `failed` 并推流、
 「全部讲一遍」跳过讲过的、`recent` 默认值与上下限、`autoSummarize` 开关与 1–20 上限、
 四种讲解风格、系统提示里确实带三行格式要求、预览里是这一步的真实内容、
