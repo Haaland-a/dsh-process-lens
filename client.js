@@ -443,6 +443,7 @@ window.__ModuleLoader__.load({
                 )
               : null,
           ),
+          h(Note, { text: '只换讲解员怎么说，三行格式不变。新手选「给新手」，赶时间选「一句话」。', recommend: '推荐「通俗」' }),
         ),
         h(
           'div',
@@ -450,7 +451,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 'pl-key' }, '省 token'),
           h(
             'label',
-            { className: 'pl-switch', title: '开了：整轮只把最近几条压成概要再发给模型，能省很多额度；关着：给尽量完整的原文' },
+            { className: 'pl-switch', title: '开了：把最近 N 步压成骨架再发（本地规则，不调模型、不花额度）；关着：给尽量完整的原文' },
             h('input', {
               type: 'checkbox',
               checked: lens.config.compact === true,
@@ -475,16 +476,20 @@ window.__ModuleLoader__.load({
             onKeyDown: (event) => {
               if (event.key === 'Enter') event.target.blur()
             },
-            title: '只带最近这么多条概要',
+            title: '精炼最近这么多步再发（1~50）',
           }),
-          h('span', { className: 'pl-unit' }, '条'),
-          ...[5, 10].map((n) =>
+          h('span', { className: 'pl-unit' }, '步 · 只精炼最近这些步'),
+          ...[3, 5, 10, 20].map((n) =>
             h(
               'button',
               { key: `quick-${n}`, type: 'button', className: 'pl-mini', onClick: () => void saveConfig({ compactCount: n }) },
               String(n),
             ),
           ),
+          h(Note, {
+            text: '省 token 打开过程：最近 N 步先本地精炼再发——同一件事合并成一行、长路径折成 #1、重复的路径只写一次图例。不调模型，不花额度。',
+            recommend: true,
+          }),
         ),
         h(
           'div',
@@ -492,6 +497,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 'pl-key' }, '提示词'),
           h('button', { type: 'button', className: 'pl-mini', onClick: () => void loadPreview(), disabled: busy }, busy ? '读取中…' : '看当前提示词'),
           h('button', { type: 'button', className: 'pl-mini', onClick: () => openDraft(null) }, panel === 'new' ? '取消' : '新建存档'),
+          h(Note, { text: '点「看当前提示词」能看到真正发出去的两段文本；想改口吻就新建一份存档。三行格式会自动补上。' }),
         ),
         panel === 'preview' && preview
           ? h(
@@ -501,7 +507,7 @@ window.__ModuleLoader__.load({
                 'div',
                 { className: 'pl-pre-head' },
                 `发给模型的提示词 · 共 ${preview.chars} 字 · 风格：${preview.styleName}` +
-                  (preview.compact ? ` · 省 token 已开（最近 ${preview.compactCount} 条）` : '') +
+                  (preview.compact ? ` · 省 token 已开（精炼最近 ${preview.compactCount} 步）` : '') +
                   (preview.compact && preview.fullChars > preview.chars
                     ? ` · 不省是 ${preview.fullChars} 字，实际省了 ${Math.round((1 - preview.chars / preview.fullChars) * 100)}%`
                     : '') +
@@ -574,6 +580,20 @@ window.__ModuleLoader__.load({
     }
     // ── 设置区：模型 / 模式 / 自动弹出 ────────────────────────────────────────
 
+    /**
+     * 每个设置后面那句人话：说清它管什么，再顺手标一下「推荐开 / 推荐关」。
+     * 推荐值直接写成小标签，省得人自己去猜哪个开关该动。
+     */
+    function Note({ text, recommend }) {
+      const label = recommend === true ? '推荐开' : recommend === false ? '推荐关' : String(recommend ?? '')
+      return h(
+        'div',
+        { className: 'pl-why' },
+        h('span', null, text),
+        label ? h('span', { className: `pl-rec${recommend === false ? ' is-off' : ''}` }, label) : null,
+      )
+    }
+
     function Settings({ lens }) {
       const [expanded, setExpanded] = useState(false)
       useEffect(() => {
@@ -642,6 +662,10 @@ window.__ModuleLoader__.load({
             },
             '刷新',
           ),
+          h(Note, {
+            text: '决定谁把过程翻成人话。默认跟会话用同一个；单独挑个小模型更省钱，讲得也够用。',
+            recommend: '推荐跟随会话',
+          }),
         ),
         modelIssue
           ? h('div', { className: 'pl-alert' }, `模型列表：${modelIssue}`)
@@ -669,6 +693,7 @@ window.__ModuleLoader__.load({
             { className: 'pl-unit' },
             lens.config.thinking === true ? '先思考再回答 · 慢一点但更细' : '直接回答 · 快、省额度',
           ),
+          h(Note, { text: '先自己想一遍再回答，讲得更细；代价是慢一点、更费额度。平时关着就够用。', recommend: false }),
         ),
         h(
           'div',
@@ -685,6 +710,7 @@ window.__ModuleLoader__.load({
             h('span', { className: 'pl-switch-box' }),
             h('span', { className: 'pl-switch-text' }, lens.config.autoOpen ? '开' : '关'),
           ),
+          h(Note, { text: '一有新一轮就自己把面板摊开，只显示原文、一分额度都不花。', recommend: true }),
         ),
         h(
           'div',
@@ -708,6 +734,7 @@ window.__ModuleLoader__.load({
             title: '打开面板时先摆最近这么多步；想看更多随时可以点「展开全部」',
           }),
           h('span', { className: 'pl-unit' }, '步 · 只摆最新的这些，想看全随时展开'),
+          h(Note, { text: '一进来先摆最近这么多步；想看全这一轮，上面点一下「展开」就行。', recommend: '推荐 8' }),
         ),
         h(
           'div',
@@ -745,6 +772,7 @@ window.__ModuleLoader__.load({
             title: '打开面板时自动讲最近这么多步',
           }),
           h('span', { className: 'pl-unit' }, '步 · 一打开就自动讲这些的概要'),
+          h(Note, { text: '一打开面板就自动把最近几步翻成人话，会花额度；想一分不花就关着，手动点「讲这步」。', recommend: false }),
         ),
         h(PromptStudio, { lens }),
         h(
@@ -768,7 +796,7 @@ window.__ModuleLoader__.load({
               h('p', null, '· 自动弹出：出现新一轮就把面板摊出来（只显示原文）；关着就等你点「看过程」。'),
               h('p', null, '· 总结风格：决定讲解员怎么说话——通俗、专业、一句话、给新手；只换说法，不换三行格式。'),
               h('p', null, '· 提示词：「看当前提示词」能看到真正发出去的两段文本；「新建存档」可以写自己的要求并起名，之后在风格下拉里随时切回。'),
-              h('p', null, '· 省 token：开了以后只把最近 N 条压成概要再发给模型，额度省很多，代价是细节没那么全。'),
+              h('p', null, '· 省 token：开了以后，最近 N 步先在你本机精炼成骨架（同一件事合并、长路径折成 #1）再发给模型，额度省很多，全程不调模型、不花额度。'),
               chosen ? h('p', null, `· 现在用的是：${chosen.provider.name} / ${chosen.name}`) : null,
             )
           : null,
@@ -1342,7 +1370,7 @@ window.__ModuleLoader__.load({
 .pl-request { display: block; font-size: 11.5px; padding: 6px 9px; border-radius: 8px; background: var(--dsw-alias-bg-layer-1, rgba(127,127,127,.10)); max-height: 54px; overflow: auto; }
 .pl-request.is-dim { opacity: .5; }
 .pl-settings { padding: 0 12px 7px; display: flex; flex-direction: column; gap: 6px; }
-.pl-row { display: flex; align-items: center; gap: 7px; }
+.pl-row { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 .pl-key { flex: 0 0 62px; font-size: 11px; opacity: .6; }
 .pl-select { flex: 1 1 auto; min-width: 0; font: inherit; font-size: 11.5px; padding: 3px 5px; border-radius: 7px; border: 1px solid var(--dsw-alias-border-l2, rgba(127,127,127,.35)); background: var(--dsw-alias-bg-layer-1, Canvas); color: var(--dsw-alias-label-primary, CanvasText); }
 .pl-bar { display: flex; align-items: center; gap: 8px; padding: 0 12px 7px; }
@@ -1413,6 +1441,9 @@ window.__ModuleLoader__.load({
 .pl-raw-code.is-args { opacity: .6; background: rgba(127,127,127,.06); border-radius: 6px; padding: 4px 6px; }\n.pl-raw-out { flex: 1 1 100%; font-size: 11.5px; opacity: .72; word-break: break-word; white-space: pre-wrap; max-height: 240px; overflow: auto; }
 .pl-num { width: 66px; font: inherit; font-size: 12px; padding: 3px 7px; border-radius: 7px; border: 1px solid rgba(127,127,127,.32); background: transparent; color: inherit; }
 .pl-unit { font-size: 11px; opacity: .6; }
+.pl-why { flex-basis: 100%; display: flex; align-items: center; gap: 6px; margin-top: 1px; font-size: 11px; line-height: 1.5; opacity: .72; }
+.pl-rec { flex: none; padding: 0 5px; border-radius: 999px; font-size: 10px; line-height: 15px; background: rgba(64,160,110,.16); color: #2f8a5b; }
+.pl-rec.is-off { background: rgba(120,130,150,.16); color: #6b7280; }
 .pl-more-steps { align-self: stretch; font: inherit; font-size: 11.5px; padding: 6px 10px; border-radius: 9px; border: 1px dashed rgba(127,127,127,.34); background: transparent; color: inherit; opacity: .75; cursor: pointer; }
 .pl-more-steps:hover { background: rgba(127,127,127,.1); opacity: 1; }
 .pl-more-steps.is-collapse { border-style: solid; }

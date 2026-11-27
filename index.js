@@ -168,6 +168,29 @@ const clip = (value, limit) => {
 
 const oneLine = (value, limit) => clip(String(value ?? '').replace(/\s+/g, ' '), limit)
 
+/** 宿主往用户消息里塞的系统行：时间采样、时区、技能目录之类，全都不该出现在面板里。 */
+const NOISE_LINE =
+  /^(time sampled|browser time zone|elapsed since|the available skill catalog|\[Asia\/[A-Za-z]+\]|time:|current time|system reminder)/i
+
+/**
+ * 把宿主塞进用户消息里的系统行和 XML 提示块洗掉，只留用户真正说的话。
+ * 这些内容既不该显示在「你让它做的」里，也不该占发给模型的字数。
+ */
+function cleanUserText(value) {
+  let out = String(value ?? '')
+  out = out.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, ' ')
+  out = out.replace(/<untrusted-web-content[^>]*>[\s\S]*?<\/untrusted-web-content>/gi, ' ')
+  const kept = []
+  for (const raw of out.split('\n')) {
+    const line = raw.trim()
+    if (!line) continue
+    if (NOISE_LINE.test(line)) continue
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(line)) continue
+    kept.push(line)
+  }
+  return kept.join(' ').trim()
+}
+
 /** 从消息里取出人话部分（text 块）。 */
 function textOf(message) {
   const content = message?.content
@@ -641,11 +664,6 @@ export function apply(ctx) {
    * 打开抽屉、连上推送、轮次跑完，统统不算 —— 光看不点，一分钱不花。
    */
   /**
-   * 真正发出去的那一份。
-   * 省 token 不是无条件压缩：内容本来就短时，压缩版为了带上「最近 N 步概要」反而更长，
-   * 所以两边都算，只有真的更短才用压缩版——保证开了省 token 绝不会更费。
-   */
-  /**
    * 完整版：能给多少给多少。老会话、复杂步骤用这一版讲得最细。
    */
   function buildPromptFull(record, step) {
@@ -674,36 +692,157 @@ export function apply(ctx) {
     return lines.join('\n')
   }
 
+  /** 结论味儿的句子，抽句时优先留这些。 */
+  const CONCLUSION_HINT =
+    /(所以|因此|结论|问题是|原因|改为|综上|总之|意味着|因为|根因|修复|because|therefore|conclusion|root cause|fix)/i
+
   /**
-   * 压缩版：整轮只给最近 N 步的要点，当前这一步的细节也砍到最低。
+   * 从工具参数里挑最能说明「它到底做了什么」的那一个键。
+   * 参数原样留着最占地方，挑一个键就够读者理解这一步。
+   */
+  function keyParamOf(tool) {
+    let parsed = null
+    try {
+      parsed = JSON.parse(tool.args || '{}')
+    } catch {
+      parsed = null
+    }
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      for (const key of ['file_path', 'path', 'pattern', 'url', 'query', 'command', 'cmd', 'target', 'name']) {
+        const value = parsed[key]
+        if (typeof value === 'string' && value.trim()) return `${key}=${oneLine(value, 110)}`
+      }
+      const first = Object.entries(parsed).find(([, value]) => typeof value === 'string' && value.trim())
+      if (first) return `${first[0]}=${oneLine(first[1], 110)}`
+    }
+    return tool.detail ? oneLine(tool.detail, 110) : ''
+  }
+
+  /**
+   * 从一大段输出里挑「有信息」的行：报错、数字、结论、开头结尾。日志样板行直接丢。
+   */
+  function interestingLines(value, limit) {
+    const lines = String(value ?? '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line && !/^[\s·•\-—*]+$/.test(line))
+    if (lines.length === 0) return []
+    if (lines.length <= limit) return lines.map((line) => clip(line, 200))
+    const scored = lines.map((line, index) => {
+      let score = 0
+      if (/(error|failed|失败|错误|denied|ENOENT|EACCES|exception|throw)/i.test(line)) score += 5
+      if (/\d/.test(line)) score += 2
+      if (/(done|成功|完成|找到|matches?|total|已改)/i.test(line)) score += 3
+      if (index === 0) score += 4
+      if (index === lines.length - 1) score += 3
+      if (line.length > 500) score -= 3
+      return { line, index, score }
+    })
+    return scored
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .sort((a, b) => a.index - b.index)
+      .map((item) => clip(item.line, 200))
+  }
+
+  /**
+   * 抽句：优先留带结论/原因味的句子，不够再拿首句补。比硬截断省，也不容易把「为什么」丢掉。
+   */
+  function pickSentences(value, limit) {
+    const flat = String(value ?? '').replace(/\s+/g, ' ').trim()
+    if (!flat) return ''
+    const parts = (flat.match(/[^。！？；.!?;]+[。！？；.!?;]?/g) ?? [flat]).map((part) => part.trim()).filter(Boolean)
+    if (parts.length <= limit) return clip(parts.join(''), 240)
+    const picked = []
+    for (const part of parts) {
+      if (!CONCLUSION_HINT.test(part)) continue
+      picked.push(part)
+      if (picked.length >= limit) break
+    }
+    if (picked.length === 0) picked.push(parts[0])
+    return clip(picked.slice(0, limit).join(''), 240)
+  }
+
+  /**
+   * 实体折叠：同一个长路径/URL/文件名出现 ≥2 次就换成 #1 #2，图例只写一次。
+   * 这是「不丢信息又能省很多」的关键——重复的长串几乎全是路径。
+   */
+  function foldEntities(body) {
+    const pattern = /[A-Za-z]:[\\/][^\s"'`）)]{6,}|https?:\/\/[^\s"'`）)]{6,}|[\w./-]{14,}\.(?:js|mjs|ts|tsx|json|md|py|go|rs|css|html|yml|yaml)/g
+    const counts = new Map()
+    for (const match of body.match(pattern) ?? []) counts.set(match, (counts.get(match) ?? 0) + 1)
+    const foldable = [...counts.entries()]
+      .filter(([, times]) => times >= 2)
+      .sort((a, b) => b[0].length * b[1] - a[0].length * a[1])
+      .slice(0, 12)
+    if (foldable.length === 0) return { text: body, legend: '' }
+    let folded = body
+    const legend = []
+    foldable.forEach(([value], index) => {
+      folded = folded.split(value).join(`#${index + 1}`)
+      legend.push(`#${index + 1}=${value}`)
+    })
+    return { text: folded, legend: legend.join('  ') }
+  }
+
+  /**
+   * 精炼版：最近 N 步各压成一行骨架（做了什么 → 结果要点），只给当前这步补「它在想 / 它在说」，
+   * 最后把长路径折成 #编号并附图例。全程本地规则，不调模型，不花额度也不会瞎编。
    */
   function buildPromptCompact(record, step) {
-    const lines = []
-    if (record.request) lines.push(`用户提的诉求：${clip(record.request, 120)}`)
-    lines.push(`这是这一轮里的第 ${step.step} 步。`)
     const keep = Math.min(50, Math.max(1, Math.round(Number(settings.compactCount) || 5)))
     const recent = [...record.steps.values()].slice(-keep)
-    lines.push(`省 token 模式：信息已压缩，一共只给最近 ${recent.length} 步的要点。`)
-    for (const item of recent) {
-      const mark = item.step === step.step ? '（就是这步）' : ''
-      lines.push(`- 第 ${item.step} 步${mark}：${briefOfStep(item)}`)
+    const rows = recent.map((item) => {
+      const action = item.tools.at(-1)
+      const extra = item.tools.length > 1 ? `（共 ${item.tools.length} 次）` : ''
+      const param = action ? keyParamOf(action) : ''
+      const head = action ? `${toolLabel(action.name)}${param ? `：${param}` : ''}${extra}` : '没调工具'
+      let outcome
+      if (!action) outcome = '只在自己想/写'
+      else if (action.state === 'error') outcome = `失败 ${interestingLines(action.error || '', 2).join(' / ') || '出错了'}`
+      else if (action.state === 'running') outcome = '还在跑'
+      else outcome = interestingLines(action.result || '', 2).join(' / ') || '没有输出'
+      return {
+        index: item.step,
+        current: item.step === step.step,
+        head,
+        outcome,
+        think: item.reasoning ? pickSentences(item.reasoning, 1) : '',
+        say: item.answer ? pickSentences(item.answer, 1) : '',
+      }
+    })
+    // 连着几步干同一件事，只写一行（最常见的浪费）
+    const foldedRows = []
+    for (const row of rows) {
+      const prev = foldedRows.at(-1)
+      if (prev && !row.current && !prev.current && prev.head === row.head && prev.outcome === row.outcome) {
+        prev.repeat += 1
+        prev.lastIndex = row.index
+        continue
+      }
+      foldedRows.push({ ...row, repeat: 1, lastIndex: row.index })
     }
-    if (step.reasoning) lines.push(`它在想（压缩）：${oneLine(step.reasoning, 240)}`)
-    if (step.answer) lines.push(`它在写（压缩）：${oneLine(step.answer, 200)}`)
-    if (step.tools.length > 0) {
-      lines.push('这一步的操作（压缩）：')
-      for (const tool of step.tools.slice(-6)) {
-        const detail = tool.detail ? `（${clip(tool.detail, 80)}）` : ''
-        const outcome =
-          tool.state === 'error'
-            ? `失败：${oneLine(tool.error || '出错了', 100)}`
-            : tool.state === 'running'
-              ? '还在进行'
-              : `返回：${oneLine(tool.result, 100) || '没有内容'}`
-        lines.push(`- ${toolLabel(tool.name)}${detail} → ${outcome}`)
+    const bodyLines = []
+    for (const row of foldedRows) {
+      const range =
+        row.repeat > 1 ? `第${row.index}~${row.lastIndex}步（同样的事做了 ${row.repeat} 次）` : `第${row.index}步`
+      const mark = row.current ? '★' : ''
+      bodyLines.push(`- ${range}${mark} ${row.head} → ${row.outcome || '没有输出'}`)
+      if (row.current) {
+        if (row.think) bodyLines.push(`  它在想：${row.think}`)
+        if (row.say) bodyLines.push(`  它在说：${row.say}`)
       }
     }
-    lines.push('看清楚的就讲，看不清的别猜。请按三行格式讲给用户听。')
+    const folded = foldEntities(bodyLines.join('\n'))
+    const lines = []
+    if (record.request) lines.push(`用户要的：${oneLine(record.request, 100)}`)
+    lines.push(
+      `这是这一轮的第 ${step.step} 步。省 token 模式：最近 ${foldedRows.length} 步已精炼成骨架，` +
+        '长路径/地址折成 #编号（图例在最后），关键参数、报错、结果要点都在。',
+    )
+    lines.push(folded.text)
+    if (folded.legend) lines.push(`图例：${folded.legend}`)
+    lines.push('只看要点，缺的信息就说「看不到」，别猜。按三行格式讲给用户听。')
     return lines.join('\n')
   }
 
@@ -893,7 +1032,7 @@ export function apply(ctx) {
         const bucket = sessionBucket(sessionId)
         const last = [...bucket.turns.values()].at(-1)
         if (last) {
-          last.request = oneLine(textOf(data), REQUEST_CHARS)
+          last.request = oneLine(cleanUserText(textOf(data)), REQUEST_CHARS)
           pushTurn(sessionId, last.turn)
         }
         return

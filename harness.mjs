@@ -246,35 +246,70 @@ check('能看到这一步的真实内容', String(prompt1.json?.user ?? '').incl
 await hit('/process-lens/api/config', 'POST', { compact: false })
 // 造一轮很肥的记录：一段 3000 字的回答 + 12 个工具，压缩才有意义
 events.push({ type: 'turn/start', time: 4000, data: { turn: 5 } })
-events.push({ type: 'user/message', time: 4001, data: { role: 'user', content: [{ type: 'text', text: '把这一轮日志全看一遍' }] } })
-events.push({ type: 'step/start', time: 4010, data: { turn: 5, step: 1 } })
+events.push({
+  type: 'user/message',
+  time: 4001,
+  data: {
+    role: 'user',
+    content: [
+      {
+        type: 'text',
+        text: [
+          '把这一轮日志全看一遍',
+          '<system-reminder>内部提醒不该出现在面板里</system-reminder>',
+          'Time sampled while preparing turn 5, step 1: 2026-11-27T20:01:22+08:00[Asia/Shanghai]',
+          'Browser time zone for this request: Asia/Shanghai. Interpret otherwise-unqualified dates and times in this zone.',
+        ].join('\n'),
+      },
+    ],
+  },
+})
+// 先来 9 步：同一个长路径反复读（逼出实体折叠），前 3 步结果一模一样（逼出连续重复折叠）
+for (let index = 1; index <= 9; index += 1) {
+  events.push({ type: 'step/start', time: 4010 + index * 5, data: { turn: 5, step: index } })
+  events.push({
+    type: 'tool/call',
+    time: 4011 + index * 5,
+    data: { turn: 5, step: index, callId: `e${index}`, name: 'read', arguments: JSON.stringify({ file_path: 'E:/logs/same.log' }) },
+  })
+  events.push({
+    type: 'tool/result',
+    time: 4012 + index * 5,
+    data: {
+      turn: 5,
+      step: index,
+      message: {
+        toolCallId: `e${index}`,
+        content: [{ type: 'text', text: index <= 3 ? '前三步的结果一模一样。' : `第 ${index} 步结果：${'这一行是日志正文。'.repeat(6)}` }],
+      },
+    },
+  })
+  events.push({ type: 'step/end', time: 4013 + index * 5, data: { turn: 5, step: index } })
+}
+// 第 10 步最肥：一段 3000 字回答 + 12 次读同一个路径，完整版才会大到能看出差别
+events.push({ type: 'step/start', time: 4090, data: { turn: 5, step: 10 } })
 events.push({
   type: 'assistant/message',
-  time: 4011,
-  data: {
-    turn: 5,
-    step: 1,
-    message: { id: 'MSG-FAT', content: [{ type: 'text', text: '我把日志一条条看过了。'.repeat(220) }] },
-    stream: [],
-  },
+  time: 4091,
+  data: { turn: 5, step: 10, message: { id: 'MSG-FAT', content: [{ type: 'text', text: '我把日志一条条看过了。'.repeat(220) }] }, stream: [] },
 })
 for (let index = 1; index <= 12; index += 1) {
   events.push({
     type: 'tool/call',
-    time: 4020 + index,
-    data: { turn: 5, step: 1, callId: `f${index}`, name: 'read', arguments: JSON.stringify({ file_path: `E:/logs/${index}.log` }) },
+    time: 4100 + index,
+    data: { turn: 5, step: 10, callId: `f${index}`, name: 'read', arguments: JSON.stringify({ file_path: 'E:/logs/same.log' }) },
   })
   events.push({
     type: 'tool/result',
-    time: 4030 + index,
-    data: { turn: 5, step: 1, message: { toolCallId: `f${index}`, content: [{ type: 'text', text: '日志内容很多行。'.repeat(40) }] } },
+    time: 4120 + index,
+    data: { turn: 5, step: 10, message: { toolCallId: `f${index}`, content: [{ type: 'text', text: '日志内容很多行。'.repeat(40) }] } },
   })
 }
-events.push({ type: 'step/end', time: 4090, data: { turn: 5, step: 1 } })
+events.push({ type: 'step/end', time: 4150, data: { turn: 5, step: 10 } })
 events.push({ type: 'turn/end', time: 4099, data: { turn: 5, reason: { kind: 'completed' } } })
 await hit(`/process-lens/api/snapshot?session=${SESSION_ID}&turn=5`)
 const bigPrompt = await hit(`/process-lens/api/prompt?session=${SESSION_ID}`)
-await hit('/process-lens/api/config', 'POST', { compact: true, compactCount: 5 })
+await hit('/process-lens/api/config', 'POST', { compact: true, compactCount: 10 })
 const smallPrompt = await hit(`/process-lens/api/prompt?session=${SESSION_ID}`)
 check(
   '省 token 真的更短',
@@ -282,14 +317,31 @@ check(
   `省后 ${smallPrompt.json?.chars} 字 / 不省 ${bigPrompt.json?.chars} 字`,
 )
 check(
-  '省 token 模式会带「最近 N 条概要」',
-  String(smallPrompt.json?.user ?? '').includes('一共只给最近') && String(smallPrompt.json?.user ?? '').includes('第 1 步'),
+  '精炼版会说明：只给最近几步的精炼骨架',
+  String(smallPrompt.json?.user ?? '').includes('省 token 模式：最近') && /这是这一轮的第 \d+ 步/.test(String(smallPrompt.json?.user ?? '')),
   String(smallPrompt.json?.user ?? '').slice(0, 80),
 )
 check(
-  '省 token 模式没把用户诉求丢掉',
-  String(smallPrompt.json?.user ?? '').includes('用户提的诉求'),
+  '精炼版没把用户诉求丢掉',
+  String(smallPrompt.json?.user ?? '').includes('把这一轮日志全看一遍'),
   String(smallPrompt.json?.user ?? '').slice(0, 40),
+)
+check(
+  '用户消息里注入的时间/时区行会被洗掉',
+  !String(smallPrompt.json?.user ?? '').includes('Time sampled') &&
+    !String(smallPrompt.json?.user ?? '').includes('Asia/Shanghai') &&
+    !String(smallPrompt.json?.user ?? '').includes('技能目录更新了'),
+  String(smallPrompt.json?.user ?? '').slice(0, 60),
+)
+check(
+  '重复出现的长路径折成 #编号并附图例',
+  String(smallPrompt.json?.user ?? '').includes('#1') && String(smallPrompt.json?.user ?? '').includes('图例：'),
+  String(smallPrompt.json?.user ?? '').includes('图例：') ? 'has legend' : 'no legend',
+)
+check(
+  '连续同样的事会折成一条（第 i~j 步）',
+  /第\d+~\d+步（同样的事做了 \d+ 次）/.test(String(smallPrompt.json?.user ?? '')),
+  /第\d+~\d+步/.exec(String(smallPrompt.json?.user ?? ''))?.[0] ?? 'no fold',
 )
 check('省 token 模式会说明是压缩过的', String(smallPrompt.json?.user ?? '').includes('省 token'), String(smallPrompt.json?.user ?? '').slice(0, 40))
 check('预览会说明这次真的用了压缩版', smallPrompt.json?.compactUsed === true, smallPrompt.json?.compactUsed)
