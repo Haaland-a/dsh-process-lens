@@ -697,7 +697,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 'pl-key' }, '自动弹出'),
           h(
             'label',
-            { className: 'pl-switch', title: '开了：出现新一轮就把进度面板摊出来（只显示原文，不花额度）；关着：只在你点「看过程」时出现' },
+            { className: 'pl-switch', title: '开了：出现新一轮就把进度面板自己弹出来；关着（推荐）：只在你点「看过程」或下面的过程按钮时才出现' },
             h('input', {
               type: 'checkbox',
               checked: lens.config.autoOpen === true,
@@ -706,7 +706,7 @@ window.__ModuleLoader__.load({
             h('span', { className: 'pl-switch-box' }),
             h('span', { className: 'pl-switch-text' }, lens.config.autoOpen ? '开' : '关'),
           ),
-          h(Note, { text: '一有新一轮就自己把面板摊开，只显示原文、一分额度都不花。', recommend: true }),
+          h(Note, { text: '一有新一轮就把面板自己弹出来，会打断你；建议关着，想看再点「看过程」。', recommend: false }),
         ),
         h(
           'div',
@@ -790,7 +790,7 @@ window.__ModuleLoader__.load({
               h('p', null, '· 读的时候不会被打断：你往上翻、或者点开「展开原文」，面板就把当前这几步钉住，新步骤只在下面排队，点「回到最新」才跟过去。'),
               h('p', null, '· 讲这步 / 全部讲一遍：点哪个讲哪个，点一次算一次模型调用，讲到过的会标「讲完了」。'),
               h('p', null, '· 打开时自动讲：开了以后每次打开面板，自动把最近 N 步（默认 3）翻成人话概要；不想要就关掉，一打开只看原文。'),
-              h('p', null, '· 自动弹出：出现新一轮就把面板摊出来（只显示原文）；关着就等你点「看过程」。'),
+              h('p', null, '· 自动弹出（默认关、也建议关）：开了会自己弹面板打断你；关着就等你点「看过程」。'),
               h('p', null, '· 总结风格：决定讲解员怎么说话——通俗、专业、一句话、给新手；只换说法，不换三行格式。'),
               h('p', null, '· 提示词：「看当前提示词」能看到真正发出去的两段文本；「新建存档」可以写自己的要求并起名，之后在风格下拉里随时切回。'),
               h('p', null, '· 省 token：开了以后，最近 N 步先在你本机精炼成骨架（同一件事合并、长路径折成 #1）再发给模型，额度省很多，全程不调模型、不花额度。'),
@@ -1322,16 +1322,14 @@ window.__ModuleLoader__.load({
             'div',
             { className: 'pl-body', ref: bodyRef, onScroll },
             lens.notice ? h('div', { className: 'pl-alert' }, lens.notice) : null,
-            frozen
+            frozen && queued > 0
               ? h(
                   'div',
                   { className: 'pl-frozen', role: 'status' },
                   h(
                     'span',
                     { className: 'pl-frozen-text' },
-                    queued > 0
-                      ? `停在你读到的地方，后面又做了 ${queued} 步——没打断你`
-                      : '停在你读到的地方，新步骤不会把上面的内容挤掉',
+                    `后面又做了 ${queued} 步——没打断你`,
                   ),
                   h(
                     'button',

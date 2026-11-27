@@ -442,6 +442,16 @@ check(
   '回到最新',
 )
 check(
+  '没新步骤时不弹那条黄色小条',
+  clientSrc.includes('frozen && queued > 0') && !clientSrc.includes('新步骤不会把上面的内容挤掉'),
+  '仅当有排队步骤才提示',
+)
+check(
+  '自动弹出推荐关（默认也不弹）',
+  clientSrc.includes('关着（推荐）') && readFileSync(join(import.meta.dirname, 'index.js'), 'utf8').includes('autoOpen: false'),
+  'autoOpen 默认关',
+)
+check(
   '换一轮会重新跟随最新',
   clientSrc.includes('}, [lens.sessionId, lens.turn])'),
   'reset',

@@ -1,6 +1,6 @@
 {
   "name": "dsh-process-lens",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "private": true,
   "type": "module",
   "description": "过程讲解器 —— 把 AI 的处理过程翻译成大白话。讲解模型可单独选，什么时候讲由你决定。",
