@@ -801,6 +801,40 @@ function cardOfDraftCheck(text) {
   return live > 0 && oldBlock < 0
 }
 
+// 23) 存储：看得见占用，也能只清掉不要的那部分
+const storeBase = await hit('/process-lens/api/storage')
+check(
+  '存储页能看到设置文件路径',
+  typeof storeBase.json?.data?.file === 'string' && storeBase.json.data.file.includes('process-lens.json'),
+  storeBase.json?.data?.file,
+)
+check(
+  '存储页能算出内存里有多少步',
+  Number(storeBase.json?.data?.memory?.steps) > 0,
+  storeBase.json?.data?.memory,
+)
+await hit('/process-lens/api/prompts', 'POST', { action: 'save', name: '临时存档', text: '这是我的提示词' })
+const withPrompt = await hit('/process-lens/api/storage')
+check('提示词存档也算进占用', withPrompt.json?.data?.prompts?.length === 1, withPrompt.json?.data?.prompts)
+await hit('/process-lens/api/storage', 'POST', { action: 'delete-prompt', id: withPrompt.json.data.prompts[0].id })
+const afterPromptDelete = await hit('/process-lens/api/storage')
+check('能单条删掉提示词存档', afterPromptDelete.json?.data?.prompts?.length === 0)
+await hit('/process-lens/api/storage', 'POST', { action: 'clear-memory' })
+const afterMemoryClear = await hit('/process-lens/api/storage')
+check(
+  '能一键清空内存缓存',
+  Number(afterMemoryClear.json?.data?.memory?.sessions) === 0 && Number(afterMemoryClear.json?.data?.memory?.steps) === 0,
+  afterMemoryClear.json?.data?.memory,
+)
+await hit('/process-lens/api/config', 'POST', { provider: 'somewhere', model: 'something' })
+await hit('/process-lens/api/storage', 'POST', { action: 'reset-settings' })
+const afterReset = await hit('/process-lens/api/config')
+check(
+  '恢复默认设置会退回默认值',
+  afterReset.json?.settings?.provider === '' && afterReset.json?.settings?.model === '',
+  afterReset.json?.settings?.provider,
+)
+
 // 22) 界面上确实有这两样东西
 const streamClientSrc = readFileSync(new URL('./client.js', import.meta.url), 'utf8')
 check('卡片上有「优先」按钮', streamClientSrc.includes('排到队列最前面生成') && streamClientSrc.includes('onPriority'))
@@ -810,6 +844,16 @@ check(
   cardOfDraftCheck(streamClientSrc),
 )
 check('排队时显示第几位', streamClientSrc.includes('排队中…（第'))
+check(
+  '设置页能展开存储明细',
+  streamClientSrc.includes('查看占用') && streamClientSrc.includes("apiGet('/storage')"),
+)
+check(
+  '清理按钮都在存储块里',
+  streamClientSrc.includes("action: 'clear-memory'") &&
+    streamClientSrc.includes("action: 'reset-settings'") &&
+    streamClientSrc.includes("action: 'delete-prompt'"),
+)
 
 const failed = checks.filter((item) => !item.ok)
 console.log(`\n${checks.length - failed.length}/${checks.length} 通过`)

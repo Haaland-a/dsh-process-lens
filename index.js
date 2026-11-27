@@ -14,7 +14,7 @@
  * @module dsh-process-lens
  */
 
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { readFile, writeFile, mkdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -400,6 +400,82 @@ export function apply(ctx) {
     const state = last.state === 'error' ? '失败' : last.state === 'running' ? '进行中' : '成功'
     const title = step.card?.title ? `${step.card.title}·` : ''
     return `${title}${toolLabel(last.name)}（${state}）`
+  }
+
+  /** 一条步骤记录大概占多少字节：只数真正存下来的文本，别为了显示去序列化整棵树 */
+  function roughBytes(entry) {
+    let chars = 0
+    chars += String(entry.reasoning ?? '').length
+    chars += String(entry.answer ?? '').length
+    chars += String(entry.draft ?? '').length
+    for (const tool of entry.tools ?? []) {
+      chars += String(tool.detail ?? '').length
+      chars += String(tool.result ?? '').length
+      chars += String(tool.error ?? '').length
+      chars += String(tool.args ?? '').length
+    }
+    if (entry.card) {
+      chars += String(entry.card.title ?? '').length
+      chars += String(entry.card.doing ?? '').length
+      chars += String(entry.card.result ?? '').length
+    }
+    // UTF-8 中文 3 字节、英文 1 字节，按 2 折中估
+    return chars * 2
+  }
+
+  function bucketUsage(bucket) {
+    let turns = 0
+    let steps = 0
+    let bytes = 0
+    let lastAt = 0
+    for (const record of bucket.turns.values()) {
+      turns += 1
+      lastAt = Math.max(lastAt, Number(record.endedAt) || Number(record.startedAt) || 0)
+      for (const entry of record.steps.values()) {
+        steps += 1
+        bytes += roughBytes(entry)
+      }
+    }
+    return { turns, steps, bytes, lastAt }
+  }
+
+  async function storageReport() {
+    const file = settingsFile()
+    let bytes = 0
+    let exists = true
+    try {
+      bytes = (await stat(file)).size
+    } catch {
+      exists = false
+      bytes = 0
+    }
+    const prompts = promptList().map((item) => ({
+      id: item.id,
+      name: String(item.name ?? ''),
+      chars: String(item.text ?? '').length,
+    }))
+    let turns = 0
+    let steps = 0
+    let memoryBytes = 0
+    const held = []
+    for (const [id, bucket] of sessions) {
+      const one = bucketUsage(bucket)
+      turns += one.turns
+      steps += one.steps
+      memoryBytes += one.bytes
+      held.push({ session: id, short: id.slice(0, 8), turns: one.turns, steps: one.steps, bytes: one.bytes, lastAt: one.lastAt })
+    }
+    held.sort((a, b) => b.lastAt - a.lastAt)
+    return {
+      file,
+      exists,
+      bytes,
+      prompts,
+      promptBytes: prompts.reduce((sum, item) => sum + item.chars * 2, 0),
+      sessions: held,
+      memory: { sessions: sessions.size, turns, steps, bytes: memoryBytes },
+      jobs: { running, queued: queue.length, inflight: inflight.size },
+    }
   }
 
   function saveSettingsSoon() {
@@ -1697,6 +1773,42 @@ export function apply(ctx) {
         }
         saveSettingsSoon()
         writeJson(res, 200, { ok: true, prompts: promptList(), settings: publicSettings() })
+        return
+      }
+      if (route === '/storage' && method === 'GET') {
+        writeJson(res, 200, { ok: true, data: await storageReport() })
+        return
+      }
+      if (route === '/storage' && method === 'POST') {
+        const body = await readBody(req)
+        const action = String(body.action ?? '')
+        if (action === 'delete-prompt') {
+          const id = String(body.id ?? '')
+          settings.prompts = promptList().filter((item) => item.id !== id)
+          if (String(settings.activePrompt ?? '') === id) settings.activePrompt = ''
+          saveSettingsSoon()
+        } else if (action === 'clear-prompts') {
+          settings.prompts = []
+          settings.activePrompt = ''
+          saveSettingsSoon()
+        } else if (action === 'clear-session') {
+          const key = String(body.session ?? '')
+          if (key) {
+            sessions.delete(key)
+            messageTurns.delete(key)
+          }
+        } else if (action === 'clear-memory') {
+          sessions.clear()
+          messageTurns.clear()
+        } else if (action === 'reset-settings') {
+          Object.assign(settings, DEFAULTS)
+          settings.prompts = []
+          saveSettingsSoon()
+        } else {
+          writeJson(res, 400, { ok: false, error: '不认识的操作' })
+          return
+        }
+        writeJson(res, 200, { ok: true, data: await storageReport(), settings: publicSettings() })
         return
       }
       writeJson(res, 404, { ok: false, error: 'not-found' })

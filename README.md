@@ -1,9 +1,9 @@
 ﻿# 过程讲解器（dsh-process-lens）
 
 [![DSH plugin](https://img.shields.io/badge/DSH-plugin-4f7cff)](https://github.com/Haaland-a/dsh-process-lens)
-[![version](https://img.shields.io/badge/version-0.6.0-2ea043)](./package.json)
+[![version](https://img.shields.io/badge/version-0.7.0-2ea043)](./package.json)
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
-[![self test](https://img.shields.io/badge/self--test-124%2F124-2ea043)](./harness.mjs)
+[![self test](https://img.shields.io/badge/self--test-132%2F132-2ea043)](./harness.mjs)
 
 把 AI 干活的每一步摊开给你看：**原文点一下就看全文**（不花额度），**人话解说按需生成**（点哪步才讲哪步），**用哪个模型讲由你单独挑**。
 
@@ -413,6 +413,27 @@ glob=按名字找文件、web_search=上网搜、todo_write=列待办），省�
 
 界面上能看到的排队信息：卡片状态写 `排队中…（第 N 位）`，优先按钮上写 `优先（第 N 位）`。
 
+### 4.17 v0.7.0：存储看得见，也能只删不要的那部分（新）
+
+设置页多一行 **存储**，点右边的 `查看占用` 展开。
+
+**先回答「存在哪儿」。**
+
+| 东西 | 位置 | 会不会自己消失 |
+| --- | --- | --- |
+| 开关、模型、外观、提示词存档 | 插件目录里的 `process-lens.json`（界面上直接显示完整路径，这台机器是 `C:\Users\<你>\.dsh\process-lens.json`） | 不会，重启后还在 |
+| 每条会话的过程记录（每步的思考原文、回答、工具参数与返回、三行讲解） | **只在内存里**，不落盘 | 插件重启或 DSH 重启就没了；重新打开面板会从 DSH 自己的会话记录重新读一遍，不额外调模型 |
+| 正在排队 / 正在生成的讲解 | 内存 | 同理 |
+
+所以磁盘上只有那一个 JSON；占内存的大头是过程记录（尤其是一步里塞了几百行命令输出的那种）。
+
+**能清理什么。**
+
+- 提示词存档：每条显示字数，可以单条 `删`，也可以 `全部删掉`。
+- 内存缓存：显示「几条会话 · 几轮 · 几步 · 估算大小」，可以按会话单条 `清`，也可以 `全部清掉`。清的是插件自己这份副本，DSH 的聊天记录一条都不动，重新打开面板会自动重建。
+- `恢复默认设置`：把上面那个 JSON 退回出厂值（连带清空提示词存档），要点两下——第一下变成 `确定恢复默认？`，4 秒内再点才生效。
+- 顶部按钮直接显示合计占用，不用展开也能看出多大。
+
 ## 二、三个入口在哪儿
 
 | 位置 | 长什么样 | 干什么 |
@@ -529,7 +550,7 @@ dsh plugin add link:E:/Personal/Desktop/dsh/dsh-process-lens --profile desktop
 node harness.mjs
 ```
 
-用假 ctx 跑 **124 条**断言：历史补账、messageId→轮次定位、工具人话标签、原文（含参数/返回）随卡返回、失败标红、
+用假 ctx 跑 **132 条**断言：历史补账、messageId→轮次定位、工具人话标签、原文（含参数/返回）随卡返回、失败标红、
 
 以及 6 条前端静态断言（新步骤不挤掉正在读的卡、钉住时不拽滚动条、往上翻/展开原文会钉住、吸顶条已删（改成静默钉住）、换轮恢复跟随）、
 「只连流不点 = 0 次模型调用」、显式点讲才 1 次且用插件自己选的模型、讲失败会标 `failed` 并推流、

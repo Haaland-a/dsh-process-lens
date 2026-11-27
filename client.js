@@ -590,8 +590,180 @@ window.__ModuleLoader__.load({
               ),
             )
           : null,
+        h(Storage, {}),
       )
     }
+    // ── 存储：设置文件 / 提示词存档 / 内存里的过程记录 ──────────────────────────
+    function sizeText(bytes) {
+      const value = Math.max(0, Number(bytes) || 0)
+      if (value < 1024) return `${value} B`
+      if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
+      return `${(value / 1024 / 1024).toFixed(1)} MB`
+    }
+
+    function Storage() {
+      const [data, setData] = useState(null)
+      const [open, setOpen] = useState(false)
+      const [busy, setBusy] = useState('')
+      const [armed, setArmed] = useState(false)
+      const [error, setError] = useState('')
+
+      useEffect(() => {
+        if (!armed) return undefined
+        const timer = setTimeout(() => setArmed(false), 4000)
+        return () => clearTimeout(timer)
+      }, [armed])
+
+      const load = async () => {
+        try {
+          const payload = await apiGet('/storage')
+          setData(payload?.data ?? null)
+          setError('')
+        } catch (err) {
+          setError(err?.message ?? String(err))
+        }
+      }
+
+      useEffect(() => {
+        if (open && !data) void load()
+      }, [open])
+
+      const act = async (body) => {
+        setBusy(String(body.action))
+        try {
+          const payload = await apiPost('/storage', body)
+          if (payload?.data) setData(payload.data)
+          if (payload?.settings) void loadConfig(true)
+          setError('')
+        } catch (err) {
+          setError(err?.message ?? String(err))
+        } finally {
+          setBusy('')
+        }
+      }
+
+      const reset = () => {
+        if (!armed) {
+          setArmed(true)
+          return
+        }
+        setArmed(false)
+        void act({ action: 'reset-settings' })
+      }
+
+      const prompts = data?.prompts ?? []
+      const held = data?.sessions ?? []
+      const memory = data?.memory ?? { sessions: 0, turns: 0, steps: 0, bytes: 0 }
+      const total = data ? sizeText(Number(data.bytes) + Number(memory.bytes)) : ''
+
+      return h(
+        'div',
+        { className: 'pl-store' },
+        h(
+          'div',
+          { className: 'pl-row' },
+          h('span', { className: 'pl-key' }, '存储'),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'pl-mini',
+              onClick: () => {
+                setOpen(!open)
+                if (!open) void load()
+              },
+            },
+            open ? '收起' : data ? `占用 ${total}` : '查看占用',
+          ),
+        ),
+        open
+          ? h(
+              'div',
+              { className: 'pl-store-panel' },
+              h(
+                'div',
+                { className: 'pl-store-line' },
+                h('span', { className: 'pl-store-name', title: data?.file ?? '' }, data && data.exists === false ? '设置文件还没生成' : (data?.file ?? '')),
+                h('span', { className: 'pl-unit' }, sizeText(data?.bytes)),
+              ),
+              h(
+                'div',
+                { className: 'pl-store-line' },
+                h('span', { className: 'pl-store-name' }, `提示词存档 ${prompts.length} 条 · ${sizeText(data?.promptBytes)}`),
+                prompts.length
+                  ? h(
+                      'button',
+                      { type: 'button', className: 'pl-mini is-danger', onClick: () => void act({ action: 'clear-prompts' }), disabled: busy === 'clear-prompts' },
+                      '全部删掉',
+                    )
+                  : null,
+              ),
+              prompts.length
+                ? h(
+                    'div',
+                    { className: 'pl-store-list' },
+                    ...prompts.map((item) =>
+                      h(
+                        'div',
+                        { key: item.id, className: 'pl-store-row' },
+                        h('span', { className: 'pl-store-name' }, item.name || item.id),
+                        h('span', { className: 'pl-unit' }, `${item.chars} 字`),
+                        h(
+                          'button',
+                          { type: 'button', className: 'pl-mini is-danger', onClick: () => void act({ action: 'delete-prompt', id: item.id }), disabled: busy === 'delete-prompt' },
+                          '删',
+                        ),
+                      ),
+                    ),
+                  )
+                : null,
+              h(
+                'div',
+                { className: 'pl-store-line' },
+                h(
+                  'span',
+                  { className: 'pl-store-name' },
+                  `内存缓存 ${memory.sessions} 条会话 · ${memory.turns} 轮 · ${memory.steps} 步 · ${sizeText(memory.bytes)}`,
+                ),
+                memory.sessions
+                  ? h(
+                      'button',
+                      { type: 'button', className: 'pl-mini is-danger', onClick: () => void act({ action: 'clear-memory' }), disabled: busy === 'clear-memory' },
+                      '全部清掉',
+                    )
+                  : null,
+              ),
+              held.length
+                ? h(
+                    'div',
+                    { className: 'pl-store-list' },
+                    ...held.map((item) =>
+                      h(
+                        'div',
+                        { key: item.session, className: 'pl-store-row' },
+                        h('span', { className: 'pl-store-name', title: item.session }, `${item.short || item.session} · ${item.steps} 步`),
+                        h('span', { className: 'pl-unit' }, sizeText(item.bytes)),
+                        h(
+                          'button',
+                          { type: 'button', className: 'pl-mini', onClick: () => void act({ action: 'clear-session', session: item.session }), disabled: busy === 'clear-session' },
+                          '清',
+                        ),
+                      ),
+                    ),
+                  )
+                : null,
+              h(
+                'div',
+                { className: 'pl-store-line' },
+                h('button', { type: 'button', className: 'pl-mini', onClick: () => void load(), disabled: busy !== '' }, '刷新'),
+                h('button', { type: 'button', className: 'pl-mini is-danger', onClick: reset, disabled: busy === 'reset-settings' }, armed ? '确定恢复默认？' : '恢复默认设置'),
+              ),
+              error ? h('div', { className: 'pl-store-line' }, error) : null,
+            )
+          : null,
+      )
+    }
+
     // ── 设置区：模型 / 模式 / 自动弹出 ────────────────────────────────────────
 
 
@@ -1688,6 +1860,12 @@ window.__ModuleLoader__.load({
 .pl-request { display: block; font-size: 11.5px; padding: 6px 9px; border-radius: 8px; background: var(--dsw-alias-bg-layer-1, rgba(127,127,127,.10)); max-height: 54px; overflow: auto; }
 .pl-request.is-dim { opacity: .5; }
 .pl-settings { padding: 0 12px 7px; display: flex; flex-direction: column; gap: 6px; }
+.pl-store { display: flex; flex-direction: column; gap: 6px; }
+.pl-store-panel { display: flex; flex-direction: column; gap: 6px; padding: 8px 9px; border-radius: 10px; border: 1px solid rgba(127,127,127,.22); background: rgba(127,127,127,.06); }
+.pl-store-line { display: flex; align-items: center; gap: 8px; font-size: 11.5px; line-height: 1.5; }
+.pl-store-list { display: flex; flex-direction: column; gap: 4px; }
+.pl-store-row { display: flex; align-items: center; gap: 6px; font-size: 11.5px; }
+.pl-store-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: anywhere; font-family: ui-monospace, Consolas, 'Courier New', monospace; opacity: .82; }
 .pl-row { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 .pl-key { flex: 0 0 62px; font-size: 11px; opacity: .6; }
 .pl-select { flex: 1 1 auto; min-width: 0; font: inherit; font-size: 11.5px; padding: 3px 5px; border-radius: 7px; border: 1px solid var(--dsw-alias-border-l2, rgba(127,127,127,.35)); background: var(--dsw-alias-bg-layer-1, Canvas); color: var(--dsw-alias-label-primary, CanvasText); }
