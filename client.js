@@ -624,7 +624,6 @@ window.__ModuleLoader__.load({
       const batchValue = Math.min(50, Math.max(2, Math.round(Number(lens.config.batchEvery) || 5)))
       const batchOn = Number(lens.config.batchEvery) >= 2
       // 批量要「攒够再一次」，这两个是「一步一讲」，同时开等于白省
-      const batchClash = batchOn && (lens.config.autoSummarize === true || lens.config.liveExplain === true)
 
       return h(
         'div',
@@ -808,23 +807,6 @@ window.__ModuleLoader__.load({
             recommend: false,
           }),
         ),
-        batchClash
-          ? h(
-              'div',
-              { className: 'pl-warn' },
-              h('span', null, '和省 token++ 冲突：'),
-              h('span', null, '「打开时自动讲」「开着就自动讲」会一步一步单讲，把批量省下来的额度又花回去。'),
-              h(
-                'button',
-                {
-                  type: 'button',
-                  className: 'pl-warn-btn',
-                  onClick: () => void saveConfig({ autoSummarize: false, liveExplain: false }),
-                },
-                '把这两个关掉',
-              ),
-            )
-          : null,
         h(
           'div',
           { className: 'pl-row' },
@@ -900,7 +882,7 @@ window.__ModuleLoader__.load({
               h('p', null, '· 讲解模型：专门用来把过程翻译成人话。默认跟会话用同一个；换一个小模型可以更省钱。'),
               h('p', null, '· 原文：每张卡上面有个「展开原文」，点开能看到它这一步的完整思考、完整参数、完整返回和它说的话，一分额度都不花。'),
               h('p', null, '· 打开时显示 N 步：面板一进来先摆最近 N 步（默认 8），上面有按钮「展开这一轮全部」，不会漏步也不至于一屏刷不完。'),
-              h('p', null, '· 读的时候不会被打断：你往上翻、或者点开「展开原文」，面板就把当前这几步钉住，新步骤只在下面排队，点「回到最新」才跟过去。'),
+              h('p', null, '· 读的时候不会被打断：你往上翻、或者点开「展开原文」，面板就把当前这几步钉住，新步骤只在下面排队；滚回底下就自动跟过去。'),
               h('p', null, '· 讲这步 / 全部讲一遍：点哪个讲哪个，点一次算一次模型调用，讲到过的会标「讲完了」。'),
         h(
           'p',
@@ -909,7 +891,7 @@ window.__ModuleLoader__.load({
         ),
               h('p', null, '· 省 token++：这才是「每 N 步发一次」。开着以后平时不吭声，每攒够 N 步才找一次模型，一次把这 N 步合起来讲；10 步只花 2 次调用，比一步一步单讲省得多。'),
               h('p', null, '· 后台跑：省 token++ 的附带选项。关着 = 只有面板打开时才跑（一关面板就停，一分不花）；开着 = 面板关着它也照常按 N 步攒着讲。'),
-              h('p', null, '· 和省 token++ 冲突：省 token++ 要「攒够再一次」，而「打开时自动讲」「开着就自动讲」是「一步一讲」，两个一起开等于白省，所以开着批量时它会提示你把那两个关掉。'),
+              h('p', null, '· 和省 token++ 打岔：「打开时自动讲」「开着就自动讲」是「一步一讲」，跟「攒够再一次」相反。所以开着省 token++ 时，这两个自动讲会直接让路，不花那份钱。'),
               h('p', null, '· 打开时自动讲：开了以后每次打开面板，自动把最近 N 步（默认 3）翻成人话概要；不想要就关掉，一打开只看原文。'),
               h('p', null, '· 开着就自动讲：面板停在过程页时，来一步就自动讲一步，不用点；关掉面板或切到设置页立刻停，之前的老步骤不会被翻出来重讲。'),
               h('p', null, '· 自动弹出（默认关、也建议关）：开了会自己弹面板打断你；关着就等你点「看过程」。'),
@@ -1190,6 +1172,11 @@ window.__ModuleLoader__.load({
           ),
         ),
         h('div', { className: 'pl-theme-hint' }, current.hint),
+        h(
+          'div',
+          { className: 'pl-theme-scope' },
+          '只换这个面板的底色和字色，不动整个界面；想换整个界面请去 DSH 自己的外观设置。',
+        ),
       )
     }
 
@@ -1517,7 +1504,7 @@ window.__ModuleLoader__.load({
                 ? '已开「开着就自动讲」：面板开着的时候来一步讲一步（花额度），关掉面板就停'
                 : lens.config.autoSummarize === true
                   ? `已开「打开时自动讲最近 ${Math.min(20, Math.max(1, Math.round(Number(lens.config.autoSummarizeCount) || 3)))} 步」：每次打开面板都会自动生成这些概要（花额度）`
-                  : '默认只显示原文。点一次才花一次额度，讲过的会标「讲完了」',
+                  : '',
             ),
             steps.length > 1
               ? h(
@@ -1566,27 +1553,11 @@ window.__ModuleLoader__.load({
             'div',
             { className: 'pl-body', ref: bodyRef, onScroll },
             lens.notice ? h('div', { className: 'pl-alert' }, lens.notice) : null,
-            frozen && queued > 0
-              ? h(
-                  'div',
-                  { className: 'pl-frozen', role: 'status' },
-                  h(
-                    'span',
-                    { className: 'pl-frozen-text' },
-                    `后面又做了 ${queued} 步——没打断你`,
-                  ),
-                  h(
-                    'button',
-                    {
-                      type: 'button',
-                      className: 'pl-frozen-btn',
-                      onClick: jumpLatest,
-                      title: '解钉并跳到最下面',
-                    },
-                    '回到最新',
-                  ),
-                )
-              : null,
+            h(
+              'div',
+              { className: 'pl-cost' },
+              '讲解会调模型、花 token：建议用免费或低价模型；高价模型不建议开「自动讲」。',
+            ),
             !snapshot && !lens.notice
               ? h('div', { className: 'pl-empty' }, '正在读取过程记录…')
               : null,
@@ -1768,21 +1739,15 @@ window.__ModuleLoader__.load({
 .pl-raw-op { flex: 0 0 auto; font-size: 10.5px; padding: 0 6px; border-radius: 999px; background: rgba(127,127,127,.16); white-space: nowrap; }
 .pl-raw-op.is-error { background: rgba(214,69,69,.16); color: var(--dsw-alias-state-error-primary, #d64545); }
 .pl-raw-code { flex: 1 1 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; opacity: .74; word-break: break-all; white-space: pre-wrap; max-height: 200px; overflow: auto; }
-.pl-raw-code.is-args { opacity: .6; background: rgba(127,127,127,.06); border-radius: 6px; padding: 4px 6px; }\n.pl-raw-out { flex: 1 1 100%; font-size: 11.5px; opacity: .72; word-break: break-word; white-space: pre-wrap; max-height: 240px; overflow: auto; }
+.pl-raw-code.is-args { opacity: .6; background: rgba(127,127,127,.06); border-radius: 6px; padding: 4px 6px; }
+.pl-raw-out { flex: 1 1 100%; font-size: 11.5px; opacity: .72; word-break: break-word; white-space: pre-wrap; max-height: 240px; overflow: auto; }
 .pl-num { width: 66px; font: inherit; font-size: 12px; padding: 3px 7px; border-radius: 7px; border: 1px solid rgba(127,127,127,.32); background: transparent; color: inherit; }
 .pl-unit { font-size: 11px; opacity: .6; }
 .pl-rec { flex: none; margin-left: 2px; padding: 0 6px; border-radius: 999px; font-size: 10px; line-height: 16px; background: rgba(64,160,110,.16); color: #2f8a5b; cursor: help; }
 .pl-rec.is-off { background: rgba(120,130,150,.16); color: #6b7280; }
-.pl-warn { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 2px 0 4px; padding: 7px 9px; border-radius: 9px; font-size: 11.5px; line-height: 1.5; color: #92400e; background: rgba(245,158,11,.13); border: 1px solid rgba(245,158,11,.35); }
-.pl-warn-btn { font: inherit; font-size: 11px; color: #92400e; background: rgba(255,255,255,.6); border: 1px solid rgba(245,158,11,.5); border-radius: 7px; padding: 2px 8px; cursor: pointer; }
-.pl-warn-btn:hover { background: rgba(255,255,255,.9); }
 .pl-batchtag { flex: none; margin-left: 4px; padding: 0 6px; border-radius: 999px; font-size: 10px; line-height: 16px; color: #1d4ed8; background: rgba(37,99,235,.12); }
 .pl-more-steps { align-self: stretch; font: inherit; font-size: 11.5px; padding: 6px 10px; border-radius: 9px; border: 1px dashed rgba(127,127,127,.34); background: transparent; color: inherit; opacity: .75; cursor: pointer; }
 .pl-more-steps:hover { background: rgba(127,127,127,.1); opacity: 1; }
-.pl-frozen { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 8px; margin-bottom: 8px; padding: 5px 9px; border-radius: 9px; border: 1px solid rgba(214,150,50,.34); background: color-mix(in srgb, var(--pl-skin, Canvas) 88%, rgba(214,150,50,.16)); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
-.pl-frozen-text { flex: 1 1 auto; font-size: 11px; line-height: 1.5; color: #a5761a; }
-.pl-frozen-btn { flex: none; font: inherit; font-size: 11px; padding: 2px 9px; border-radius: 999px; border: 1px solid rgba(214,150,50,.45); background: transparent; color: inherit; cursor: pointer; }
-.pl-frozen-btn:hover { background: rgba(214,150,50,.16); }
 .pl-more-steps.is-collapse { border-style: solid; }
 .pl-modeseg { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border-radius: 9px; border: 1px solid rgba(127,127,127,.28); background: rgba(127,127,127,.06); }
 .pl-modebtn { font: inherit; font-size: 11.5px; padding: 3px 9px; border: 0; border-radius: 7px; background: transparent; color: inherit; opacity: .7; cursor: pointer; }
@@ -1835,21 +1800,29 @@ window.__ModuleLoader__.load({
 .pl-seg-wide button { flex: 1 1 0; text-align: center; padding: 4px 8px; }
 .pl-theme-hint { font-size: 11px; opacity: .6; }
 
-/* ── 跟壁纸插件一起呼吸：有 --we-* 就用，没有就退回宿主令牌 ─────────────── */
+/* ── 主题：三档，各自一整套调色板（浅色/深色不再引用宿主或壁纸插件的颜色） ── */
 .pl-drawer {
-  --pl-skin: var(--we-panel-color, var(--dsw-alias-bg-overlay, Canvas));
-  background: color-mix(in srgb, var(--pl-skin) 93%, transparent);
-  border-color: color-mix(in srgb, var(--dsw-alias-border-l2, rgba(127,127,127,.28)) 100%, transparent);
+  --pl-skin: var(--we-panel-color, var(--dsw-alias-bg-overlay, #1b1c22));
+  --pl-ink: var(--dsw-alias-label-primary, #e8e9ef);
+  background: var(--pl-skin);
+  color: var(--pl-ink);
+  border-color: var(--dsw-alias-border-l2, rgba(127,127,127,.28));
   -webkit-backdrop-filter: blur(var(--we-blur, 16px)) saturate(var(--we-saturate, 1.2));
   backdrop-filter: blur(var(--we-blur, 16px)) saturate(var(--we-saturate, 1.2));
 }
-/* 固定浅色：就地覆盖宿主令牌，里面所有控件一起变 */
+
+/* 跟随：背景跟宿主（有壁纸插件就跟壁纸），字色也跟宿主 */
+.pl-drawer[data-pl-theme="auto"] { color: var(--dsw-alias-label-primary, inherit); }
+
+/* 固定浅色：整块浅底深字。用 !important 是为了压住宿主/壁纸插件的全局背景规则 */
 .pl-drawer[data-pl-theme="light"] {
-  --pl-skin: #fcfcfe;
-  --dsw-alias-bg-overlay: #fcfcfe;
+  color-scheme: light;
+  --pl-skin: #f7f8fb;
+  --pl-ink: #1b1c21;
+  --dsw-alias-bg-overlay: #f7f8fb;
   --dsw-alias-bg-layer-1: rgba(18,20,26,.045);
-  --dsw-alias-bg-layer-2: rgba(18,20,26,.075);
-  --dsw-alias-bg-layer-3: rgba(18,20,26,.11);
+  --dsw-alias-bg-layer-2: rgba(18,20,26,.08);
+  --dsw-alias-bg-layer-3: rgba(18,20,26,.12);
   --dsw-alias-label-primary: #1b1c21;
   --dsw-alias-label-secondary: rgba(27,28,33,.62);
   --dsw-alias-border-l1: rgba(18,20,26,.12);
@@ -1858,11 +1831,19 @@ window.__ModuleLoader__.load({
   --dsw-alias-state-success-primary: #1f8a4c;
   --dsw-alias-state-error-primary: #c6303a;
   --we-blur: 0px;
+  background: #f7f8fb !important;
+  color: #1b1c21 !important;
+  border-color: rgba(18,20,26,.16);
   box-shadow: 0 20px 52px rgba(20,22,30,.18);
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
 }
+
 /* 固定深色 */
 .pl-drawer[data-pl-theme="dark"] {
+  color-scheme: dark;
   --pl-skin: #15161b;
+  --pl-ink: #e8e9ef;
   --dsw-alias-bg-overlay: #15161b;
   --dsw-alias-bg-layer-1: rgba(255,255,255,.065);
   --dsw-alias-bg-layer-2: rgba(255,255,255,.10);
@@ -1875,14 +1856,46 @@ window.__ModuleLoader__.load({
   --dsw-alias-state-success-primary: #4ec17f;
   --dsw-alias-state-error-primary: #ff6b6b;
   --we-blur: 0px;
+  background: #15161b !important;
+  color: #e8e9ef !important;
+  border-color: rgba(255,255,255,.14);
   box-shadow: 0 24px 64px rgba(0,0,0,.55);
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
 }
-/* 固定主题时别让壁纸色调透进来，字才看得清 */
-.pl-drawer[data-pl-theme="light"], .pl-drawer[data-pl-theme="dark"] {
-  background: var(--pl-skin);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
+
+/* 浅色下的灰底块：改用偏深的灰，不然浅底上几乎看不见 */
+.pl-drawer[data-pl-theme="light"] .pl-raw-row,
+.pl-drawer[data-pl-theme="light"] .pl-card,
+.pl-drawer[data-pl-theme="light"] .pl-menu,
+.pl-drawer[data-pl-theme="light"] .pl-num,
+.pl-drawer[data-pl-theme="light"] .pl-modebtn.is-on,
+.pl-drawer[data-pl-theme="light"] .pl-seg button.is-on { background: rgba(18,20,26,.055); }
+.pl-drawer[data-pl-theme="light"] .pl-card,
+.pl-drawer[data-pl-theme="light"] .pl-menu,
+.pl-drawer[data-pl-theme="light"] .pl-num { border-color: rgba(18,20,26,.14); }
+.pl-drawer[data-pl-theme="light"] .pl-seg button.is-on,
+.pl-drawer[data-pl-theme="dark"] .pl-seg button.is-on { background: var(--dsw-alias-brand-primary); color: #fff; }
+.pl-drawer[data-pl-theme="light"] .pl-raw-op,
+.pl-drawer[data-pl-theme="light"] .pl-pre { background: rgba(18,20,26,.075); }
+.pl-drawer[data-pl-theme="light"] .pl-lock,
+.pl-drawer[data-pl-theme="light"] .pl-foot-btn { border-color: rgba(18,20,26,.18); }
+
+/* 浅色下把内层容器放开，别让宿主的深色底透上来 */
+.pl-drawer[data-pl-theme="light"] .pl-head,
+.pl-drawer[data-pl-theme="light"] .pl-sub,
+.pl-drawer[data-pl-theme="light"] .pl-body,
+.pl-drawer[data-pl-theme="light"] .pl-pane,
+.pl-drawer[data-pl-theme="light"] .pl-foot,
+.pl-drawer[data-pl-theme="light"] .pl-settings { background: transparent; }
+.pl-drawer[data-pl-theme="light"] .pl-body::-webkit-scrollbar-thumb,
+.pl-drawer[data-pl-theme="light"] .pl-pane::-webkit-scrollbar-thumb { background: rgba(18,20,26,.22); }
+.pl-drawer[data-pl-theme="light"] ::selection { background: rgba(59,111,224,.22); }
+.pl-theme-scope { font-size: 11px; opacity: .5; line-height: 1.45; }
+
+/* 花销提示：常驻主页一句话，讲清会花额度、建议用便宜模型 */
+.pl-cost { flex: none; margin: 2px 0 9px; padding: 7px 9px; border-radius: 9px; font-size: 11.5px; line-height: 1.5; border: 1px dashed rgba(127,127,127,.34); background: rgba(127,127,127,.06); opacity: .85; }
+.pl-drawer[data-pl-theme="light"] .pl-cost { background: rgba(18,20,26,.045); border-color: rgba(18,20,26,.2); opacity: .92; }
 `
 
     // ── 模块导出 ──────────────────────────────────────────────────────────────

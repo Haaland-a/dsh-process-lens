@@ -438,14 +438,14 @@ check(
   'onPin',
 )
 check(
-  '面板上有「回到最新」',
-  clientSrc.includes('pl-frozen') && clientSrc.includes('回到最新'),
-  '回到最新',
+  '吸顶条和「回到最新」都去掉了（改成静默钉住）',
+  !clientSrc.includes('pl-frozen') && !clientSrc.includes('后面又做了'),
+  '不再有吸顶条',
 )
 check(
-  '没新步骤时不弹那条黄色小条',
-  clientSrc.includes('frozen && queued > 0') && !clientSrc.includes('新步骤不会把上面的内容挤掉'),
-  '仅当有排队步骤才提示',
+  '新步骤不再弹提示，直接静默排队',
+  !clientSrc.includes('frozen && queued > 0') && !clientSrc.includes('后面又做了'),
+  '静默排队',
 )
 check(
   '自动弹出推荐关（默认也不弹）',
@@ -485,9 +485,9 @@ check(
   '两个 effect 的闸门',
 )
 check(
-  '和「打开时自动讲 / 开着就自动讲」冲突会当场提示',
-  clientSrc.includes('const batchClash = batchOn &&') && clientSrc.includes('pl-warn') && clientSrc.includes('把这两个关掉'),
-  '冲突提示 + 一键关掉',
+  '省 token++ 开着时两个自动讲直接让路（不再用黄框提醒）',
+  !clientSrc.includes('const batchClash') && !clientSrc.includes('pl-warn') && clientSrc.includes('if (Number(lens.config.batchEvery) >= 2) return'),
+  '靠短路让路',
 )
 check(
   '被合并的步会写清楚「并进第 k 步」',
@@ -669,6 +669,18 @@ const dedupeStep = dedupeSnap.json?.data?.steps?.[0] ?? {}
 const dedupeTools = dedupeStep.tools ?? []
 check('重放不会把一次工具调用记成两次', dedupeTools.length === 1, dedupeTools.map((item) => item.callId))
 check('重放不会留下一条假的「还在进行」', dedupeTools.every((item) => item.state !== 'running'), dedupeTools.map((item) => item.state))
+
+// 19) v0.4.0：主页花销声明、删掉的两块声明、浅色模式底色、提示词准确性
+const v040Client = readFileSync(new URL('./client.js', import.meta.url), 'utf8')
+const v040Host = readFileSync(new URL('./index.js', import.meta.url), 'utf8')
+check('主页写着会花 token、建议用便宜模型', v040Client.includes('讲解会调模型、花 token'))
+check('吸顶条「后面又做了 N 步」已删掉', !v040Client.includes('后面又做了'))
+check('黄色冲突框已删掉', !v040Client.includes('pl-warn') && !v040Client.includes('和省 token++ 冲突'))
+check('浅色模式真的换底色', v040Client.includes('background: #f7f8fb !important') && v040Client.includes('color-scheme: light'))
+check('没开自动讲时不再常驻一句声明', !v040Client.includes('默认只显示原文'))
+check('外观写明只改这个面板', v040Client.includes('只换这个面板的底色和字色'))
+check('提示词要求名词照抄原文', v040Host.includes('名词照抄原文'))
+check('parseCard 能认「1. 标题：…」这种写法', v040Host.includes('(?:\\d+[.、)]\\s*)?'))
 
 const failed = checks.filter((item) => !item.ok)
 console.log(`\n${checks.length - failed.length}/${checks.length} 通过`)

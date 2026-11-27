@@ -120,6 +120,18 @@ const OUTPUT_RULES = [
   '标题：不超过 14 个字，说清这一步在干什么',
   '在做什么：不超过 100 个字，说清为什么要做这一步',
   '结果：不超过 100 个字，说清得到了什么、顺不顺利、有没有卡住',
+  '不管怎么写，都要说清三件事：在干什么、为什么要干、干成了没有。',
+  '',
+  '准确性（比好听更重要）：',
+  '- 名词照抄原文：文件名、命令、参数、数字、报错原文一律照抄，不改写、不翻译、不补全、不缩写。',
+  '- 只用上面给到的信息；没给到的写「没看到」，不要猜行号、耗时、数量、原因。',
+  '- 不写「已完成」「处理完成」这类空话：要写清对象（改了哪个文件的什么、跑了哪条命令、几个通过几个失败）。',
+  '- 只是看了看、没改动任何东西时，就在结果里写明「只是看了看，没有改动」，不要编出改动。',
+  '- 同一样东西前后用一个叫法，别在标题和三行里换着叫。',
+  '',
+  '工具对照（要翻译成日常说法时照这个来，别自己猜）：',
+  '- read/write/edit = 看或改文件；bash/pwsh = 跑命令；grep = 在文件里搜内容；glob = 按名字找文件；',
+  '- web_search/web_fetch = 上网查；todo_write = 列待办；subagent/workflow = 派分身去干；skill = 查说明书。',
   '不写 markdown、不写列表、不写开场白、不写客套话。',
 ].join('\n')
 
@@ -250,10 +262,10 @@ function argsSummary(raw) {
 function parseCard(text) {
   const card = { title: '', doing: '', result: '' }
   for (const line of String(text ?? '').split(/\r?\n/)) {
-    const matched = line.match(/^\s*[*#>\-—•\s]*\s*(标题|在做什么|做什么|这一步在做什么|结果|结论)\s*[:：]\s*(.+)$/)
+    const matched = line.match(/^\s*(?:[*#>\-—•]+\s*)?(?:\d+[.、)]\s*)?(标题|在做什么|做什么|这一步在做什么|结果|结论)\s*[:：]?\s*(.+)$/)
     if (!matched) continue
     const label = matched[1]
-    const value = matched[2].replace(/\*\*/g, '').trim()
+    const value = matched[2].replace(/\*\*/g, '').replace(/^[「『"“']+|[」』"”']+$/g, '').trim()
     if (label === '标题') card.title = oneLine(value, 40)
     else if (label === '结果' || label === '结论') card.result = oneLine(value, 200)
     else if (!card.doing) card.doing = oneLine(value, 200)
