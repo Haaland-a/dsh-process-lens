@@ -51,6 +51,8 @@ const DEFAULTS = Object.freeze({
   /** 打开面板时自动讲最近几步（花额度，默认关） */
   autoSummarize: false,
   autoSummarizeCount: 3,
+  /** 面板停在过程页时，每出现新的一步就自动讲（花额度，默认关） */
+  liveExplain: false,
   /** 过程页默认就把这一轮所有步骤摆出来（false = 只摆最近 N 步） */
   allSteps: false,
   /** 内置讲解风格：plain / pro / brief / gentle */
@@ -533,6 +535,7 @@ export function apply(ctx) {
       recent: settings.recent,
       autoSummarize: settings.autoSummarize === true,
       autoSummarizeCount: settings.autoSummarizeCount,
+      liveExplain: settings.liveExplain === true,
       ...styleView(),
       styles: stylesView(),
       prompts: promptList(),
@@ -1225,6 +1228,7 @@ export function apply(ctx) {
         if (typeof body.autoOpen === 'boolean') settings.autoOpen = body.autoOpen
         if (Number.isFinite(Number(body.recent))) settings.recent = Math.min(100, Math.max(0, Math.round(Number(body.recent))))
         if (typeof body.autoSummarize === 'boolean') settings.autoSummarize = body.autoSummarize
+        if (typeof body.liveExplain === 'boolean') settings.liveExplain = body.liveExplain
         if (Number.isFinite(Number(body.autoSummarizeCount)))
           settings.autoSummarizeCount = Math.min(20, Math.max(1, Math.round(Number(body.autoSummarizeCount))))
         if (STYLE_PRESETS[body.style]) settings.style = body.style

@@ -416,6 +416,7 @@ check('能切回最近 N 步', allStepsBack.json?.settings?.allSteps === false, 
 
 // 20) 阅读保护：读的时候不能因为新步骤进来就被顶掉 / 拽走
 const clientSrc = readFileSync(join(import.meta.dirname, 'client.js'), 'utf8')
+const hostSrc = readFileSync(join(import.meta.dirname, 'index.js'), 'utf8')
 check(
   '新步骤不会把正在读的卡片挤掉（窗口按钉子切）',
   clientSrc.includes('const pool = frozen ? steps.filter((card) => card.step <= pinnedStep) : steps'),
@@ -450,6 +451,27 @@ check(
   '自动弹出推荐关（默认也不弹）',
   clientSrc.includes('关着（推荐）') && readFileSync(join(import.meta.dirname, 'index.js'), 'utf8').includes('autoOpen: false'),
   'autoOpen 默认关',
+)
+check(
+  '「开着就自动讲」开关进了设置和 Host',
+  clientSrc.includes('开着就自动讲') &&
+    clientSrc.includes('liveExplain: event.target.checked') &&
+    hostSrc.includes('liveExplain: false,') &&
+    hostSrc.includes('liveExplain: settings.liveExplain === true') &&
+    hostSrc.includes('settings.liveExplain = body.liveExplain'),
+  '设置行 + 默认关 + 落到 settings',
+)
+check(
+  '打开着才自动讲：关面板/切设置页就停',
+  clientSrc.includes("!lens.open || lens.tab === 'settings' || lens.config.liveExplain !== true") &&
+    clientSrc.includes('liveSeenRef.current = null'),
+  '三重闸门',
+)
+check(
+  '刚打开不补讲历史，只讲之后的新步',
+  clientSrc.includes("cards.filter((card) => card.status === 'done').map((card) => card.step)") &&
+    clientSrc.includes('fresh.slice(-2).map((card) => card.step)'),
+  '基线只记做完的步 + 每次最多 2 步',
 )
 check(
   '换一轮会重新跟随最新',

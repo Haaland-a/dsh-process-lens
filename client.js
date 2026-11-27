@@ -38,6 +38,7 @@ window.__ModuleLoader__.load({
         allSteps: false,
         autoSummarize: false,
         autoSummarizeCount: 3,
+  liveExplain: false,
         style: 'plain',
         activePrompt: '',
         prompts: [],
@@ -770,6 +771,26 @@ window.__ModuleLoader__.load({
           h('span', { className: 'pl-unit' }, '步'),
           h(Note, { text: '一打开面板就自动把最近几步翻成人话，会花额度；想一分不花就关着，手动点「讲这步」。', recommend: false }),
         ),
+        h(
+          'div',
+          { className: 'pl-row' },
+          h('span', { className: 'pl-key' }, '开着就自动讲'),
+          h(
+            'label',
+            {
+              className: 'pl-switch',
+              title: '开了：只要面板开着、停在过程页，每出现新的一步就自动讲这一步；一关面板就停，后台不会花额度',
+            },
+            h('input', {
+              type: 'checkbox',
+              checked: lens.config.liveExplain === true,
+              onChange: (event) => void saveConfig({ liveExplain: event.target.checked }),
+            }),
+            h('span', { className: 'pl-switch-box' }),
+            h('span', { className: 'pl-switch-text' }, lens.config.liveExplain ? '开' : '关'),
+          ),
+          h(Note, { text: '面板停在过程页时来一步讲一步，不用点；关掉面板或切到设置页就停，也不会把之前的老步骤翻出来重讲。', recommend: false }),
+        ),
         h(PromptStudio, { lens }),
         h(
           'button',
@@ -790,6 +811,7 @@ window.__ModuleLoader__.load({
               h('p', null, '· 读的时候不会被打断：你往上翻、或者点开「展开原文」，面板就把当前这几步钉住，新步骤只在下面排队，点「回到最新」才跟过去。'),
               h('p', null, '· 讲这步 / 全部讲一遍：点哪个讲哪个，点一次算一次模型调用，讲到过的会标「讲完了」。'),
               h('p', null, '· 打开时自动讲：开了以后每次打开面板，自动把最近 N 步（默认 3）翻成人话概要；不想要就关掉，一打开只看原文。'),
+              h('p', null, '· 开着就自动讲：面板停在过程页时，来一步就自动讲一步，不用点；关掉面板或切到设置页立刻停，之前的老步骤不会被翻出来重讲。'),
               h('p', null, '· 自动弹出（默认关、也建议关）：开了会自己弹面板打断你；关着就等你点「看过程」。'),
               h('p', null, '· 总结风格：决定讲解员怎么说话——通俗、专业、一句话、给新手；只换说法，不换三行格式。'),
               h('p', null, '· 提示词：「看当前提示词」能看到真正发出去的两段文本；「新建存档」可以写自己的要求并起名，之后在风格下拉里随时切回。'),
@@ -1006,6 +1028,8 @@ window.__ModuleLoader__.load({
       const pinnedRef = useRef(true)
       /** 同一轮只自动讲一次，避免快照每刷新一遍就再烧一次额度 */
       const autoDoneRef = useRef('')
+      /** 「开着就自动讲」：已经处理过的步骤号；进面板时先把已有步骤记下来，免得一口气补讲一堆历史 */
+      const liveSeenRef = useRef(null)
       /**
        * 阅读保护：你往上翻、或者点开「展开原文」，就把"此刻最新的那一步"钉住。
        * 之后进来的步骤只在下面排队，不挤掉上面的卡片、不把滚动条拽走。
@@ -1114,6 +1138,45 @@ window.__ModuleLoader__.load({
         autoDoneRef.current = key
         void explainSteps(lens.sessionId, lens.turn, targets)
       }, [lens.open, lens.sessionId, lens.turn, lens.snapshot, lens.snapshotKey, lens.config.autoSummarize, lens.config.autoSummarizeCount])
+
+      // 「开着就自动讲」：面板开着 + 停在过程页时，新出现的步骤自动开始讲。
+      // 关掉面板 / 切到设置页 / 开关没开 → 一分额度都不花；刚打开时只记基线，不补讲历史。
+      useEffect(() => {
+        if (!lens.open || lens.tab === 'settings' || lens.config.liveExplain !== true) {
+          liveSeenRef.current = null
+          return
+        }
+        if (!lens.sessionId || lens.turn === null || lens.turn === undefined) return
+        const snapshot = lens.snapshotKey === `${lens.sessionId}:${lens.turn}` ? lens.snapshot : null
+        const cards = snapshot?.steps ?? []
+        if (cards.length === 0) return
+        const scope = `${lens.sessionId}:${lens.turn}`
+        const seen = liveSeenRef.current
+        if (!seen || seen.scope !== scope) {
+          liveSeenRef.current = {
+            scope,
+            // 只把「已经做完」的步记成基线：打开时正在跑的那一步，跑完照样自动讲
+            steps: new Set(cards.filter((card) => card.status === 'done').map((card) => card.step)),
+          }
+          return
+        }
+        const idle = (card) => card.explain === undefined || card.explain === null || card.explain === 'idle'
+        const fresh = cards.filter((card) => !seen.steps.has(card.step) && card.status === 'done' && idle(card))
+        for (const card of cards) {
+          if (card.status === 'done' && !idle(card)) seen.steps.add(card.step)
+        }
+        if (fresh.length === 0) return
+        for (const card of fresh) seen.steps.add(card.step)
+        void explainSteps(lens.sessionId, lens.turn, fresh.slice(-2).map((card) => card.step))
+      }, [
+        lens.open,
+        lens.tab,
+        lens.sessionId,
+        lens.turn,
+        lens.snapshot,
+        lens.snapshotKey,
+        lens.config.liveExplain,
+      ])
 
       const turnKey = `${state.sessionId ?? ''}:${state.turn ?? ''}`
 
@@ -1271,9 +1334,11 @@ window.__ModuleLoader__.load({
             h(
               'span',
               { className: 'pl-bar-text' },
-              lens.config.autoSummarize === true
-                ? `已开「打开时自动讲最近 ${Math.min(20, Math.max(1, Math.round(Number(lens.config.autoSummarizeCount) || 3)))} 步」：每次打开面板都会自动生成这些概要（花额度）`
-                : '默认只显示原文。点一次才花一次额度，讲过的会标「讲完了」',
+              lens.config.liveExplain === true && lens.tab !== 'settings'
+                ? '已开「开着就自动讲」：面板开着的时候来一步讲一步（花额度），关掉面板就停'
+                : lens.config.autoSummarize === true
+                  ? `已开「打开时自动讲最近 ${Math.min(20, Math.max(1, Math.round(Number(lens.config.autoSummarizeCount) || 3)))} 步」：每次打开面板都会自动生成这些概要（花额度）`
+                  : '默认只显示原文。点一次才花一次额度，讲过的会标「讲完了」',
             ),
             steps.length > 1
               ? h(
