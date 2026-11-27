@@ -1,9 +1,9 @@
 # 过程讲解器（dsh-process-lens）
 
 [![DSH plugin](https://img.shields.io/badge/DSH-plugin-4f7cff)](https://github.com/Haaland-a/dsh-process-lens)
-[![version](https://img.shields.io/badge/version-0.5.0-2ea043)](./package.json)
+[![version](https://img.shields.io/badge/version-0.6.0-2ea043)](./package.json)
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
-[![self test](https://img.shields.io/badge/self--test-111%2F111-2ea043)](./harness.mjs)
+[![self test](https://img.shields.io/badge/self--test-123%2F123-2ea043)](./harness.mjs)
 
 把 AI 干活的每一步摊开给你看：**原文点一下就看全文**（不花额度），**人话解说按需生成**（点哪步才讲哪步），**用哪个模型讲由你单独挑**。
 
@@ -393,6 +393,26 @@ glob=按名字找文件、web_search=上网搜、todo_write=列待办），省�
 - 「省 token（精炼）」开着时同样生效：精炼版只保留工具名和成败，不再从返回里抽关键行。
 - 只影响发出去的内容，本地原文、历史存档、界面显示都不变。
 
+### 4.16 v0.6.0：边生成边显示 + 某一步可以插队（新）
+
+**1）文字是一边生成一边出现的。**
+
+以前点「生成讲解」后卡片一直空着，直到模型把三行全部写完才一次性冒出来。现在模型每吐出一段文字，卡片里就多一段（灰底那小块），三行写完再换成正式卡片。
+
+- 推送走已有的 SSE 通道（`/process-lens/stream`），每个卡片事件多带一个 `draft` 字段；前端节流 120ms 推一次，不会一屏几百帧。
+- 生成结束后 `draft` 立刻清空，卡片上只剩解析好的三行，不会留半截文字。
+- 「省 token++」合并成一次调用的那种卡也同样边写边显示。
+
+**2）某一步可以设成最高优先级，插到队伍最前面，必要时让它先跑。**
+
+点卡片上的 **优先** 按钮：
+
+- 没在排队的（已生成、失败、空闲）→ 直接排到队首，状态变 `排队中…（第 1 位）`。
+- 已经在排队的 → 从当前位置挪到队首，队列里其他人的位置跟着往前补。
+- 两个并发槽都占着时 → 取消其中一个**不是优先任务**的请求（它是让位，不算失败，回到队尾重跑），把槽让给这一步。
+
+界面上能看到的排队信息：卡片状态写 `排队中…（第 N 位）`，优先按钮上写 `优先（第 N 位）`。
+
 ## 二、三个入口在哪儿
 
 | 位置 | 长什么样 | 干什么 |
@@ -509,7 +529,7 @@ dsh plugin add link:E:/Personal/Desktop/dsh/dsh-process-lens --profile desktop
 node harness.mjs
 ```
 
-用假 ctx 跑 **111 条**断言：历史补账、messageId→轮次定位、工具人话标签、原文（含参数/返回）随卡返回、失败标红、
+用假 ctx 跑 **123 条**断言：历史补账、messageId→轮次定位、工具人话标签、原文（含参数/返回）随卡返回、失败标红、
 
 以及 6 条前端静态断言（新步骤不挤掉正在读的卡、钉住时不拽滚动条、往上翻/展开原文会钉住、吸顶条已删（改成静默钉住）、换轮恢复跟随）、
 「只连流不点 = 0 次模型调用」、显式点讲才 1 次且用插件自己选的模型、讲失败会标 `failed` 并推流、

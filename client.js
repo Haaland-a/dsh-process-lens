@@ -148,12 +148,13 @@ window.__ModuleLoader__.load({
       const list = Array.isArray(steps) ? steps.filter((item) => item !== null && item !== undefined) : []
       // 「重新讲一遍」：已讲好的也重讲，preset 是这一趟临时换的提示词（空 = 用设置里的）
       const replay = options?.replay === true
+      const priority = options?.priority === true
       const preset = typeof options?.preset === 'string' ? options.preset : ''
       try {
         if (list.length === 0) {
-          await apiPost('/explain', { session: sessionId, turn, replay, preset })
+          await apiPost('/explain', { session: sessionId, turn, replay, preset, priority })
         } else {
-          for (const one of list) await apiPost('/explain', { session: sessionId, turn, step: one, replay, preset })
+          for (const one of list) await apiPost('/explain', { session: sessionId, turn, step: one, replay, preset, priority })
         }
         setState({ notice: null })
       } catch (error) {
@@ -215,7 +216,8 @@ window.__ModuleLoader__.load({
     }
 
     function explainStateText(card) {
-      if (card.explain === 'queued') return '排队中…'
+      if (card.explain === 'queued')
+      return card.queuePos > 0 ? `排队中…（第 ${card.queuePos} 位）` : '排队中…'
       if (card.explain === 'running') return '正在生成…'
       if (card.explain === 'batched') return card.batchTo ? `已并进第 ${card.batchTo} 步的总结` : '已并进批量总结'
       if (card.explain === 'failed') return card.explainError || '生成失败'
@@ -922,7 +924,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function Card({ card, onExplain, onPin, onReplay, presetStyles, presetSaved }) {
+    function Card({ card, onExplain, onPin, onReplay, onPriority, presetStyles, presetSaved }) {
       const pending = card.status === 'running'
       const busy = card.explain === 'queued' || card.explain === 'running'
       const done = card.explain === 'done'
@@ -984,6 +986,7 @@ window.__ModuleLoader__.load({
               ),
             )
           : null,
+        card.draft && card.explain === 'running' ? h('div', { className: 'pl-draft' }, card.draft) : null,
         note ? h('div', { className: 'pl-note' }, note) : null,
         h(
           'div',
@@ -1003,6 +1006,20 @@ window.__ModuleLoader__.load({
               },
               busy ? '正在生成…' : done ? '已生成' : card.explain === 'failed' ? '重试' : card.explain === 'batched' ? '单独生成' : '生成讲解',
             ),
+            // 优先：把这一步挪到队列最前面（正在生成时禁用）
+            done
+              ? null
+              : h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'pl-mini pl-mini-ghost',
+                    onClick: () => onPriority?.(card.step),
+                    disabled: card.explain === 'running',
+                    title: '排到队列最前面生成',
+                  },
+                  card.explain === 'queued' && card.queuePos > 0 ? `优先（第 ${card.queuePos} 位）` : '优先',
+                ),
             // 重新讲一遍：已经讲过的也能再讲，还能临时换一份提示词
             h(
               'button',
@@ -1593,6 +1610,7 @@ window.__ModuleLoader__.load({
                 card,
                 onPin: pinHere,
                 onExplain: (step) => void explainSteps(lens.sessionId, lens.turn, [step]),
+                onPriority: (step) => void explainSteps(lens.sessionId, lens.turn, [step], { priority: true }),
                 onReplay: (step, preset) =>
                   void explainSteps(lens.sessionId, lens.turn, [step], { replay: true, preset }),
                 presetStyles: (Array.isArray(lens.config.styles) ? lens.config.styles : []).map((item) => ({
@@ -1731,6 +1749,19 @@ window.__ModuleLoader__.load({
 .pl-chip { font-size: 10.5px; padding: 1px 7px; border-radius: 999px; background: rgba(127,127,127,.14); white-space: nowrap; }
 .pl-chip.is-error { background: rgba(214,69,69,.16); color: var(--dsw-alias-state-error-primary, #d64545); }
 .pl-note { margin-top: 6px; font-size: 11px; opacity: .6; font-style: italic; }
+.pl-draft {
+  margin-top: 7px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1, rgba(127,127,127,.09));
+  color: var(--dsw-alias-label-secondary, rgba(127,127,127,.9));
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 210px;
+  overflow: auto;
+}
 .pl-card-foot { margin-top: 7px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 10.5px; }
 .pl-card-foot .pl-meta { opacity: .45; }
 .pl-plain { margin-top: 7px; padding-top: 6px; border-top: 1px dashed rgba(127,127,127,.22); }

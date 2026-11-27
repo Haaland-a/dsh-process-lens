@@ -54,6 +54,7 @@ const ctx = {
       }
     }
     if (name === 'llm') {
+      if (llmOverride) return llmOverride
       return {
         listProviders: () => [{ id: 'deepseek', name: 'DeepSeek' }],
         listModels: async () => [{ provider: 'deepseek', id: 'chat', name: 'DeepSeek Chat' }],
@@ -76,6 +77,7 @@ const ctx = {
   },
 }
 
+var llmOverride = null
 apply(ctx)
 
 function fakeRes() {
@@ -700,6 +702,103 @@ check('没开自动讲时不再常驻一句声明', !v040Client.includes('默认
     check('界面上不再有「翻译成人话」「讲这步」这类口语', !v040Client.includes('翻译成人话') && !v040Client.includes('讲这步'))
 check('提示词要求名词照抄原文', v040Host.includes('名词照抄原文'))
 check('parseCard 能认「1. 标题：…」这种写法', v040Host.includes('(?:\\d+[.、)]\\s*)?'))
+
+// 20) 流式传输：生成中就把已经吐出来的字推给界面
+const waits = []
+llmOverride = {
+  listProviders: () => [{ id: 'deepseek', name: 'DeepSeek' }],
+  listModels: async () => [{ provider: 'deepseek', id: 'chat', name: 'DeepSeek Chat' }],
+  resolveModelInfo: async () => ({ reasoning: { efforts: [{ id: 'low', name: '低' }] } }),
+  stream: async function* (options) {
+    llmCalls.push(options)
+    yield { type: 'text-delta', text: '标题：正在读日志\n' }
+    await new Promise((resolve, reject) => {
+      waits.push(resolve)
+      options.signal?.addEventListener?.('abort', () => reject(new Error('已取消')))
+    })
+    yield { type: 'text-delta', text: '在做什么：逐行看日志\n结果：找到线索\n' }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  },
+}
+const liveStream = openStream(`/process-lens/stream?session=${SESSION_ID}&turn=5`)
+await hit('/process-lens/api/explain', 'POST', { session: SESSION_ID, turn: 5, step: 1 })
+await new Promise((resolve) => setTimeout(resolve, 100))
+check(
+  '生成中就把半截文字推给界面',
+  liveStream.writes.some((chunk) => chunk.includes('标题：正在读日志')),
+  liveStream.writes.length,
+)
+check(
+  '半截文字走 draft 字段',
+  liveStream.writes.some((chunk) => chunk.includes('"draft":"标题')),
+  liveStream.writes.filter((chunk) => chunk.includes('draft')).length,
+)
+
+// 21) 优先：排在后面的那一步可以被提到最前面，还能抢占槽位
+await hit('/process-lens/api/explain', 'POST', { session: SESSION_ID, turn: 5, step: 2 })
+await hit('/process-lens/api/explain', 'POST', { session: SESSION_ID, turn: 5, step: 3 })
+await hit('/process-lens/api/explain', 'POST', { session: SESSION_ID, turn: 5, step: 4 })
+await new Promise((resolve) => setTimeout(resolve, 80))
+const byStep = (json, number) => (json?.data?.steps ?? []).find((item) => item.step === number) ?? {}
+const queuedSnap = await hit(`/process-lens/api/snapshot?session=${SESSION_ID}&turn=5`)
+check(
+  '排队时能看到自己排第几',
+  byStep(queuedSnap.json, 3).queuePos === 1 && byStep(queuedSnap.json, 4).queuePos === 2,
+  [byStep(queuedSnap.json, 3).queuePos, byStep(queuedSnap.json, 4).queuePos],
+)
+check(
+  '两个槽位占满时后来者的状态是排队中',
+  byStep(queuedSnap.json, 3).explain === 'queued' && byStep(queuedSnap.json, 4).explain === 'queued',
+  [byStep(queuedSnap.json, 3).explain, byStep(queuedSnap.json, 4).explain],
+)
+await hit('/process-lens/api/explain', 'POST', { session: SESSION_ID, turn: 5, step: 4, priority: true })
+await new Promise((resolve) => setTimeout(resolve, 180))
+const prioritySnap = await hit(`/process-lens/api/snapshot?session=${SESSION_ID}&turn=5`)
+check(
+  '点了优先就抢到槽位开始跑',
+  byStep(prioritySnap.json, 4).explain === 'running',
+  byStep(prioritySnap.json, 4).explain,
+)
+check(
+  '被让位的那一步回到队列，不算失败',
+  byStep(prioritySnap.json, 1).explain === 'queued' && byStep(prioritySnap.json, 1).explainError === null,
+  [byStep(prioritySnap.json, 1).explain, byStep(prioritySnap.json, 1).explainError],
+)
+
+// 放开所有等待中的流，收尾：排队里的任务会陆续接上来，多放几轮
+for (let round = 0; round < 8; round += 1) {
+  while (waits.length) {
+    const release = waits.shift()
+    try {
+      release()
+    } catch {}
+  }
+  await new Promise((resolve) => setTimeout(resolve, 70))
+}
+const settledSnap = await hit(`/process-lens/api/snapshot?session=${SESSION_ID}&turn=5`)
+check(
+  '放开后优先那一步先跑完',
+  byStep(settledSnap.json, 4).explain === 'done',
+  byStep(settledSnap.json, 4).explain,
+)
+check(
+  '让位又重跑的那一步也没失败',
+  byStep(settledSnap.json, 1).explain === 'done',
+  byStep(settledSnap.json, 1).explain,
+)
+check(
+  '流式结束后草稿清空',
+  !byStep(settledSnap.json, 4).draft,
+  byStep(settledSnap.json, 4).draft,
+)
+llmOverride = null
+liveStream.close()
+
+// 22) 界面上确实有这两样东西
+const streamClientSrc = readFileSync(new URL('./client.js', import.meta.url), 'utf8')
+check('卡片上有「优先」按钮', streamClientSrc.includes('排到队列最前面生成') && streamClientSrc.includes('onPriority'))
+check('生成中有流式草稿块', streamClientSrc.includes('pl-draft') && streamClientSrc.includes('card.draft'))
+check('排队时显示第几位', streamClientSrc.includes('排队中…（第'))
 
 const failed = checks.filter((item) => !item.ok)
 console.log(`\n${checks.length - failed.length}/${checks.length} 通过`)

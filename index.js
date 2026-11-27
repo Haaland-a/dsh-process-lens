@@ -305,6 +305,8 @@ export function apply(ctx) {
   /** 待讲解队列 */
   const queue = []
   let running = 0
+  /** 正在跑的 job 的 controller：优先任务插队时用它把非优先的那个让出来 */
+  const jobAborts = new Map()
   /** 正在回放会话历史时为 true：只记账，不触发讲解，避免补账时批量调模型 */
   let replaying = false
   let saveTimer = null
@@ -538,6 +540,10 @@ export function apply(ctx) {
         })),
       },
       durationMs: Math.max(0, duration),
+      /** 生成中已经吐出来的字（流式），不是生成中就空 */
+      draft: step.draft ? clip(step.draft, 4000) : '',
+      /** 排队位置：1 = 下一个就跑；不在队列里是 0 */
+      queuePos: Number(step.queuePos) || 0,
       waiting: !settled,
       at: step.startedAt,
     }
@@ -620,6 +626,7 @@ export function apply(ctx) {
     if (!record) return
     const entry = record.steps.get(step)
     if (!entry) return
+    entry.queuePos = queuePositionOf(sessionId, turn, step)
     broadcast(sessionId, turn, 'card', cardOf(record, entry))
   }
 
@@ -680,10 +687,11 @@ export function apply(ctx) {
     }
   }
 
-  async function callOnce(route, prompt, system) {
+  async function callOnce(route, prompt, system, onDelta, onStart) {
     const llm = ctx.get('llm')
     if (!llm?.stream) throw new Error('讲解服务不可用')
     const controller = new AbortController()
+    if (typeof onStart === 'function') onStart(controller)
     const timer = setTimeout(() => controller.abort(), JOB_TIMEOUT_MS)
     const effort = await lowestEffort(llm, route)
     let text = ''
@@ -703,8 +711,14 @@ export function apply(ctx) {
       }
       if (effort !== undefined) options.reasoningEffort = effort
       for await (const chunk of llm.stream(options)) {
-        if (chunk?.type === 'text-delta') text += chunk.text
-        else if (chunk?.type === 'finish' && chunk.reason?.kind === 'error') {
+        if (chunk?.type === 'text-delta') {
+          text += chunk.text
+          if (typeof onDelta === 'function') {
+            try {
+              onDelta(text)
+            } catch {}
+          }
+        } else if (chunk?.type === 'finish' && chunk.reason?.kind === 'error') {
           throw new Error(chunk.reason.failure?.message ?? '模型调用失败')
         }
       }
@@ -934,7 +948,41 @@ export function apply(ctx) {
     const compact = buildPromptCompact(record, step)
     return compact.length < full.length ? compact : full
   }
-  function enqueue(sessionId, turn, step, force, again, preset) {
+  /** 这一步在队列里排第几（1 = 下一个就跑；0 = 没在排队） */
+  function queuePositionOf(sessionId, turn, step) {
+    const index = queue.findIndex(
+      (job) => job.sessionId === String(sessionId) && job.turn === turn && job.step === step,
+    )
+    return index < 0 ? 0 : index + 1
+  }
+
+  /** 流式推送节流：生成中每 120ms 最多推一次，避免一屏几百个 SSE 帧 */
+  function streamPusher(sessionId, turn, step) {
+    let last = 0
+    let timer = null
+    const flush = () => {
+      last = Date.now()
+      pushCard(sessionId, turn, step)
+    }
+    return {
+      push() {
+        const now = Date.now()
+        if (now - last >= 120) flush()
+        else if (!timer) {
+          timer = setTimeout(() => {
+            timer = null
+            flush()
+          }, 120)
+        }
+      },
+      stop() {
+        if (timer) clearTimeout(timer)
+        timer = null
+      },
+    }
+  }
+
+  function enqueue(sessionId, turn, step, force, again, preset, priority) {
     if (replaying) return
     const record = sessions.get(String(sessionId))?.turns.get(turn)
     const entry = record?.steps.get(step)
@@ -951,7 +999,23 @@ export function apply(ctx) {
     }
     const key = `${String(sessionId)}:${turn}:${step}`
     if (inflight.has(key)) return
-    if (queue.some((job) => job.key === key)) return
+    const queuedAt = queue.findIndex((job) => job.key === key)
+    if (queuedAt >= 0) {
+      // 已经在排队：要求优先就把它挪到最前面；状态一律补回「排队中」
+      // （handler 在调进来之前把这步重置成 idle 了，不补会停在 idle 不动）
+      entry.explain = 'queued'
+      entry.error = null
+      if (priority === true && queuedAt > 0) {
+        const [moved] = queue.splice(queuedAt, 1)
+        moved.priority = true
+        queue.unshift(moved)
+        pushCard(sessionId, turn, step)
+        void drain()
+        return
+      }
+      pushCard(sessionId, turn, step)
+      return
+    }
     entry.explain = 'queued'
     if (redo) {
       entry.replaying = true
@@ -959,7 +1023,16 @@ export function apply(ctx) {
       entry.presetName = personaOf(preset)?.name ?? ''
     }
     pushCard(sessionId, turn, step)
-    queue.push({ key, sessionId: String(sessionId), turn, step, preset: redo ? String(preset ?? '') : '' })
+    const job = {
+      key,
+      sessionId: String(sessionId),
+      turn,
+      step,
+      preset: redo ? String(preset ?? '') : '',
+      priority: priority === true,
+    }
+    if (job.priority) queue.unshift(job)
+    else queue.push(job)
     void drain()
   }
 
@@ -1029,7 +1102,25 @@ export function apply(ctx) {
     ].join('\n')
   }
 
+  /** 槽位占满了、队首又是优先任务：让出一个非优先的在跑任务（它会被放回队首重跑） */
+  function makeRoomForPriority() {
+    const head = queue[0]
+    if (!head || head.priority !== true) return false
+    if (running < MAX_PARALLEL) return false
+    for (const [key, item] of jobAborts) {
+      if (item.job.priority === true) continue
+      item.job.preempted = true
+      try {
+        item.controller.abort()
+      } catch {}
+      log(`优先任务插队，先让出：${key}`)
+      return true
+    }
+    return false
+  }
+
   async function drain() {
+    makeRoomForPriority()
     while (!disposed && running < MAX_PARALLEL && queue.length > 0) {
       const job = queue.shift()
       if (!job || inflight.has(job.key)) continue
@@ -1041,6 +1132,8 @@ export function apply(ctx) {
         void drain()
       })
     }
+    // 队列里剩下的这些排位变了，顺手把位置刷到界面上
+    for (const job of queue.slice(0, 20)) pushCard(job.sessionId, job.turn, job.step)
   }
 
   async function runJob(job) {
@@ -1048,13 +1141,26 @@ export function apply(ctx) {
     const entry = record?.steps.get(job.step)
     if (!record || !entry) return
     entry.explain = 'running'
+    entry.draft = ''
+    entry.queuePos = 0
+    job.preempted = false
     pushCard(job.sessionId, job.turn, job.step)
+    const pusher = streamPusher(job.sessionId, job.turn, job.step)
     try {
       const route = resolveRoute(job.sessionId)
       if (!route) throw new Error('还没选好讲解模型，请在抽屉顶部挑一个')
       const promptText = job.kind === 'batch' ? buildBatchPrompt(record, entry, job.from, job.to) : buildPrompt(record, entry)
       entry.promptChars = promptText.length
-      const text = await callOnce(route, promptText, systemPromptWith(job.preset))
+      const text = await callOnce(
+        route,
+        promptText,
+        systemPromptWith(job.preset),
+        (partial) => {
+          entry.draft = partial
+          pusher.push()
+        },
+        (controller) => jobAborts.set(job.key, { controller, job }),
+      )
       if (!text) throw new Error('模型这次没有返回内容')
       const card = parseCard(text)
       entry.card = card
@@ -1063,6 +1169,15 @@ export function apply(ctx) {
       entry.error = null
       entry.explain = 'done'
     } catch (error) {
+      if (job.preempted === true) {
+        // 让位给优先任务：不算失败，回到队首等下一轮
+        entry.explain = 'queued'
+        entry.error = null
+        entry.draft = ''
+        queue.push(job)
+        pushCard(job.sessionId, job.turn, job.step)
+        return
+      }
       entry.error = oneLine(error?.message ?? error, 160)
       entry.explain = 'failed'
       entry.replaying = false
@@ -1077,6 +1192,9 @@ export function apply(ctx) {
       }
       log(`讲解失败：${entry.error}`)
     } finally {
+      pusher.stop()
+      jobAborts.delete(job.key)
+      entry.draft = ''
       if (!disposed) pushCard(job.sessionId, job.turn, job.step)
     }
   }
@@ -1491,6 +1609,7 @@ export function apply(ctx) {
         // 不传 step = 「这一轮还没讲过的都讲一遍」；已经讲好的不重讲，免得白烧额度。
         const preset = typeof body.preset === 'string' ? body.preset : ''
         const again = body.replay === true
+        const priority = body.priority === true
         const only = body.step === undefined ? null : Number(body.step)
         const targets =
           only === null
@@ -1504,7 +1623,7 @@ export function apply(ctx) {
           entry.explain = 'idle'
           entry.error = null
         }
-        for (const step of targets) enqueue(sessionId, turn, step, true, again, preset)
+        for (const step of targets) enqueue(sessionId, turn, step, true, again, preset, priority)
         writeJson(res, 200, { ok: true, steps: targets })
         return
       }
