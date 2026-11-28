@@ -138,7 +138,10 @@ package/LICENSE                    MIT
 - 工具步骤默认不找模型，本机写三行并挂「本机」小签；原来的「工具内容不外发」开关被它取代。
 - 修掉设置文件异步读取把刚拨开关盖回旧值的问题（改成同步读）。
 
-## 11. 怎么提交（照着点）
+## 11. 怎么提交
+
+发行包已挂在 [Releases · v0.11.0](https://github.com/Haaland-a/dsh-process-lens/releases/tag/v0.11.0)，直链 https://github.com/Haaland-a/dsh-process-lens/releases/download/v0.11.0/dsh-process-lens-0.11.0.tgz（76,345 B，sha256 44f0ef76…4260d5）。
+（照着点）
 
 第三方市场 **DSH Store**（`github.com/AI-Scarlett/DSH-Store`）走 issue 表单：
 

@@ -566,9 +566,37 @@ glob=按名字找文件、web_search=上网搜、todo_write=列待办），省�
 dsh plugin add link:E:/Personal/Desktop/dsh/dsh-process-lens --profile desktop
 ```
 
-装发行包：`npm pack` 会产出 `dsh-process-lens-0.10.4.tgz`，在「设置 → 插件 → 安装 bundle」里指向这个文件即可（和从市场安装走的是同一条路）。包里只带运行需要的东西：`index.js`、`client.js`、patch、两份语言包、详情页与功能图、图标、README、LICENSE；`harness.mjs` 不进包。
+装发行包：`npm pack` 会产出 `dsh-process-lens-0.11.0.tgz`，在「设置 → 插件 → 安装 bundle」里指向这个文件即可（和从市场安装走的是同一条路）。包里只带运行需要的东西：`index.js`、`client.js`、patch、两份语言包、详情页与功能图、图标、README、LICENSE；`harness.mjs` 不进包。
+
+也可以直接从 [Releases](https://github.com/Haaland-a/dsh-process-lens/releases) 下 `dsh-process-lens-0.11.0.tgz` 再指过去：
+`https://github.com/Haaland-a/dsh-process-lens/releases/download/v0.11.0/dsh-process-lens-0.11.0.tgz`
 
 要投稿到插件市场，材料在同目录 [SUBMIT.md](./SUBMIT.md)。
+
+发行包同时挂在 GitHub Releases 上，点下面这个直接下（市场与分享用这个链接最省事）：
+
+- 最新版：[Releases](https://github.com/Haaland-a/dsh-process-lens/releases/latest)
+- v0.11.0 直链：https://github.com/Haaland-a/dsh-process-lens/releases/download/v0.11.0/dsh-process-lens-0.11.0.tgz
+
+发下一版只要三步（脚本在 `scripts/publish.mjs`，会自己 `npm pack` 再挂到 Release）：
+
+```bash
+# 1) 改 package.json 的 version，然后提交并推送
+git commit -am "v0.11.1: …" && git push
+# 2) 带上只需 Contents 权限的令牌
+$env:GH_TOKEN = "ghp_xxx"
+# 3) 一条命令发版（打包 + 建 tag + 建 Release + 挂 tgz）
+npm run release
+```
+
+发版一条命令（改完 `package.json` 的 version、提交并 push 之后）：
+
+```powershell
+$env:GH_TOKEN = "ghp_xxx"   # 令牌只需 Contents: Read and write
+npm run release             # 打包 → 建 GitHub Release（tag = v版本号）→ 把 tgz 挂上去
+```
+
+脚本是 [scripts/publish.mjs](./scripts/publish.mjs)，重复跑不会建重复的 release，也不会重复传同一个包。
 
 改完代码后：
 

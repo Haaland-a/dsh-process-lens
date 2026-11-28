@@ -69,5 +69,9 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "scripts": {
+    "test": "node harness.mjs",
+    "release": "node scripts/publish.mjs"
   }
 }
