@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 一次性自测：用假 ctx 验收「历史补账」逻辑，不碰真实模型。
  * 跑法：node harness.mjs
  */
@@ -1608,6 +1608,15 @@ check(
   'skippedLocal 分支',
 )
 
+// 30) 额度声明：必须在开头显眼处，且语言包里也有
+const readmeTop = readText('README.md').split('\n').slice(0, 24).join('\n')
+check('README 开头就声明「会花额度」', readmeTop.includes('会花额度'))
+check('README 写明只看原文 = 0 次调用', readmeTop.includes('0 次调用'))
+check('README 写明点一次讲 = 1 次', readmeTop.includes('1 次'))
+check(
+  '语言包描述里也写明会花额度',
+  readText('locale/zh.json').includes('会花额度') && readText('locale/en.json').toLowerCase().includes('quota'),
+)
 const failed = checks.filter((item) => !item.ok)
 console.log(`\n${checks.length - failed.length}/${checks.length} 通过`)
 if (failed.length) process.exitCode = 1

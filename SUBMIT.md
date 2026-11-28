@@ -8,11 +8,11 @@
 | --- | --- |
 | 插件名（显示） | 过程讲解 |
 | 包名 | `dsh-process-lens` |
-| 版本 | `0.11.0` |
+| 版本 | `0.11.1` |
 | 作者 | `Haaland-a` |
 | 许可 | MIT |
 | 仓库 | https://github.com/Haaland-a/dsh-process-lens |
-| 发行包 | `dsh-process-lens-0.11.0.tgz`（75 KB，sha256 `44f0ef764414fe87f019280c6e8c3a5a34ae7a7a0ff8ab7508f65658da4260d5`，`npm pack` 产出） |
+| 发行包 | `dsh-process-lens-0.11.1.tgz`（76 KB，sha256 `739f7ca268be98946d3f59ac26aeef5a4f909c09cac3d001498f9123493d2e48`，`npm pack` 产出） |
 | 一句话简介 | 把 AI 每一步做了什么、结果如何，用三行大白话摆在你面前；讲解用插件自己选的模型，只在你要的时候才花调用。 |
 | 分类 | 对话界面 / 效率 |
 
@@ -60,7 +60,7 @@
 node harness.mjs
 ```
 
-用一个假 ctx 跑 **236 条**断言，全部通过，不联网、不花额度：历史补账、messageId→轮次定位、工具人话标签、原文随卡返回、失败标红、省 token 真的更短、精炼版会自称骨架、重复长路径折成 #1、流式半截文字、优先插队与让位重跑、存储明细与清理、推荐标签、以及 0.9.0 的九条（工具步骤零调用、卡片三行、本机小签、手动仍可讲、「全部生成」不算本机步……）。
+用一个假 ctx 跑 **240 条**断言，全部通过，不联网、不花额度：历史补账、messageId→轮次定位、工具人话标签、原文随卡返回、失败标红、省 token 真的更短、精炼版会自称骨架、重复长路径折成 #1、流式半截文字、优先插队与让位重跑、存储明细与清理、推荐标签、以及 0.9.0 的九条（工具步骤零调用、卡片三行、本机小签、手动仍可讲、「全部生成」不算本机步……）。
 
 ## 8. 包内文件
 
@@ -88,7 +88,13 @@ package/LICENSE                    MIT
 - 过程记录重启即失；要留档请用「重新生成」前先截图或复制。
 - 浅色/深色跟随 DSH 或壁纸插件，也可以手动固定三档。
 
-## 10. 变更（0.11.0）
+## 10. 变更（0.11.1）
+
+- README 开头新增醒目的额度声明：讲解 = 用你自己挑的模型发普通聊天请求；只看原文 0 次调用，点一次 1 次，「全部讲一遍（N 步）」N 次；后台自动讲要你自己开那三个开关。
+- 市场列表描述（中英）补同一句提示，避免只看列表就以为「白嫖」。
+- 新增 4 条静态断言（236 → 240），防止这条声明被删掉。
+
+### 历史（0.11.0）
 
 - 逐个开关校验「拨了就生效」：讲解模型、模型思考、精炼、总结风格、工具步骤不找模型、逐步生成、后台跑、显示步数、看全部步骤、外观、自动弹出。
 - 修：「开着时逐步生成」「后台跑」在合并步数 <2（不合并）时是空开关 —— 这条路径没查 `autoAllowed()`；现在不合并也要过闸门。
@@ -140,7 +146,7 @@ package/LICENSE                    MIT
 
 ## 11. 怎么提交
 
-发行包已挂在 [Releases · v0.11.0](https://github.com/Haaland-a/dsh-process-lens/releases/tag/v0.11.0)，直链 https://github.com/Haaland-a/dsh-process-lens/releases/download/v0.11.0/dsh-process-lens-0.11.0.tgz（76,345 B，sha256 44f0ef76…4260d5）。
+发行包已挂在 [Releases · v0.11.1](https://github.com/Haaland-a/dsh-process-lens/releases/tag/v0.11.1)，直链 https://github.com/Haaland-a/dsh-process-lens/releases/download/v0.11.1/dsh-process-lens-0.11.1.tgz（77,694 B，sha256 739f7ca2…3d2e48）。
 （照着点）
 
 第三方市场 **DSH Store**（`github.com/AI-Scarlett/DSH-Store`）走 issue 表单：

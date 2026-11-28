@@ -1,13 +1,20 @@
 # 过程讲解器（dsh-process-lens）
 
 [![DSH plugin](https://img.shields.io/badge/DSH-plugin-4f7cff)](https://github.com/Haaland-a/dsh-process-lens)
-[![version](https://img.shields.io/badge/version-0.11.0-2ea043)](./package.json)
+[![version](https://img.shields.io/badge/version-0.11.1-2ea043)](./package.json)
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
-[![self test](https://img.shields.io/badge/self--test-236%2F236-2ea043)](./harness.mjs)
+[![self test](https://img.shields.io/badge/self--test-240%2F240-2ea043)](./harness.mjs)
 
 把 AI 干活的每一步摊开给你看：**原文点一下就看全文**（不花额度），**人话解说按需生成**（点哪步才讲哪步），**用哪个模型讲由你单独挑**。
 
 它回答的是那个最常冒出来的问题：*"这半天它到底在忙什么？"*
+
+> [!IMPORTANT]
+> **会花额度**，花的是你自己那份模型额度。这个插件不自带密钥，也不会替你省掉这笔钱：
+> 「生成人话讲解」= 用你在「设置 → 讲解模型」里挑的那个模型发一次普通聊天请求，跟你在对话里发一句话一样计费。
+> **默认一步都不自动讲**：只看原文、只翻轮次 = **0 次调用**；点一次「生成讲解」= 1 次；「全部讲一遍（N 步）」= N 次。
+> 想让它在后台自己讲，必须**你自己**打开那三个自动开关（开着时逐步生成 / 打开时自动生成 / 后台跑）——打开就等于持续产生调用。
+> 想彻底零调用：三个自动开关全关 + 永远只用「▸ 展开原文」看。
 
 ---
 
@@ -24,7 +31,7 @@
 
 省钱的一般做法：主对话用强模型干活，讲解模型挑一个又便宜又快的。
 
-### 2. 花不花额度、看哪几轮，你自己点
+### 2. 花不花额度、看哪几轮，你自己点（钱的事先说清楚）
 
 **默认一个字都不自动讲。** 打开面板只是把原文摊出来，一次模型调用都没有。
 
@@ -483,7 +490,17 @@ glob=按名字找文件、web_search=上网搜、todo_write=列待办），省�
 - 并进总结的那几步，卡片上直接写「已并进第 5 步的总结：改了几行代码」——不点开也知道讲了什么；
 - 行下面多一句大白话，写清「选 5 就是第 1~5 步发一次、第 6~10 步再发一次，不会每步都发」。
 
-### 4.24 v0.11.0：每个开关都「拨了就生效」（新）
+### 4.25 v0.11.1：把「会花额度」写在最前面（新）
+
+功能没变，只补一件事：**钱的事不能藏在第三节**。现在 README 开头就是一条醒目的额度声明，说清四件事——
+
+- 「生成人话讲解」= 用你自己挑的模型发一次普通聊天请求，跟你发一句话一样计费；
+- 默认一步都不自动讲：只看原文 = **0 次调用**，点一次讲 = 1 次，「全部讲一遍（N 步）」= N 次；
+- 后台自动讲必须你自己打开那三个开关，打开等于持续产生调用；
+- 想彻底零调用：三个自动开关全关 + 只用「展开原文」。
+
+插件市场的列表描述里也补了同一句（中英双语），并加了 4 条静态断言，防止这行声明哪天被谁删掉。自测 236 → **240 条**。
+### 4.24 v0.11.0：每个开关都「拨了就生效」
 
 这一版只干一件事：把界面上每个开关都当真验一遍——**拨完那一秒就生效**，不是等下一轮、也不是等重启。
 
@@ -566,17 +583,17 @@ glob=按名字找文件、web_search=上网搜、todo_write=列待办），省�
 dsh plugin add link:E:/Personal/Desktop/dsh/dsh-process-lens --profile desktop
 ```
 
-装发行包：`npm pack` 会产出 `dsh-process-lens-0.11.0.tgz`，在「设置 → 插件 → 安装 bundle」里指向这个文件即可（和从市场安装走的是同一条路）。包里只带运行需要的东西：`index.js`、`client.js`、patch、两份语言包、详情页与功能图、图标、README、LICENSE；`harness.mjs` 不进包。
+装发行包：`npm pack` 会产出 `dsh-process-lens-0.11.1.tgz`，在「设置 → 插件 → 安装 bundle」里指向这个文件即可（和从市场安装走的是同一条路）。包里只带运行需要的东西：`index.js`、`client.js`、patch、两份语言包、详情页与功能图、图标、README、LICENSE；`harness.mjs` 不进包。
 
 也可以直接从 [Releases](https://github.com/Haaland-a/dsh-process-lens/releases) 下 `dsh-process-lens-0.11.0.tgz` 再指过去：
-`https://github.com/Haaland-a/dsh-process-lens/releases/download/v0.11.0/dsh-process-lens-0.11.0.tgz`
+`https://github.com/Haaland-a/dsh-process-lens/releases/download/v0.11.1/dsh-process-lens-0.11.1.tgz`
 
 要投稿到插件市场，材料在同目录 [SUBMIT.md](./SUBMIT.md)。
 
 发行包同时挂在 GitHub Releases 上，点下面这个直接下（市场与分享用这个链接最省事）：
 
 - 最新版：[Releases](https://github.com/Haaland-a/dsh-process-lens/releases/latest)
-- v0.11.0 直链：https://github.com/Haaland-a/dsh-process-lens/releases/download/v0.11.0/dsh-process-lens-0.11.0.tgz
+- v0.11.1 直链：https://github.com/Haaland-a/dsh-process-lens/releases/download/v0.11.1/dsh-process-lens-0.11.1.tgz
 
 发下一版只要三步（脚本在 `scripts/publish.mjs`，会自己 `npm pack` 再挂到 Release）：
 
@@ -696,7 +713,7 @@ npm run release             # 打包 → 建 GitHub Release（tag = v版本号�
 node harness.mjs
 ```
 
-用假 ctx 跑 **236 条**断言：历史补账、messageId→轮次定位、工具人话标签、原文（含参数/返回）随卡返回、失败标红、
+用假 ctx 跑 **240 条**断言：历史补账、messageId→轮次定位、工具人话标签、原文（含参数/返回）随卡返回、失败标红、
 
 以及 6 条前端静态断言（新步骤不挤掉正在读的卡、钉住时不拽滚动条、往上翻/展开原文会钉住、吸顶条已删（改成静默钉住）、换轮恢复跟随）、
 「只连流不点 = 0 次模型调用」、显式点讲才 1 次且用插件自己选的模型、讲失败会标 `failed` 并推流、
