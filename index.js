@@ -55,7 +55,7 @@ const DEFAULTS = Object.freeze({
   /** 面板停在过程页时，每出现新的一步就自动讲（花额度，默认关） */
   liveExplain: false,
   /** 省 token++：每 N 步只调一次模型，一次把这 N 步一起总结（0/1 = 关） */
-  batchEvery: 0,
+  batchEvery: 5,
   /** 批量总结也允许面板没开时后台跑；false = 只在面板开着时跑 */
   batchBackground: false,
   /** 过程页默认就把这一轮所有步骤摆出来（false = 只摆最近 N 步） */
@@ -597,6 +597,8 @@ export function apply(ctx) {
       batchTo: step.batchTo ?? null,
       /** 这一张卡是第几号到第几号的合并总结 */
       batchRange: step.batchRange ?? null,
+      /** 并进去的那份总结叫什么（点开并进的那步也能直接看到） */
+      batchGist: step.batchSummary ?? '',
       /** 重新讲一遍进行中：旧的三行还留着，只是按钮显示「重讲中…」 */
       replaying: step.replaying === true,
       /** 这次是用哪份预设讲的（空 = 设置里的那个） */
@@ -1231,13 +1233,47 @@ export function apply(ctx) {
     return true
   }
 
-  /** 批量总结的提示词：复用本地精炼骨架，只多一句「合起来讲」 */
+  /**
+   * 批量总结的正文：只写这一批的那几步，一步一行（做了什么 → 结果，加一句它在想/它在说）。
+   * 不再掺「最近 N 步」——选 5 就真的只带这 5 步，这一批也只发一次请求。
+   */
+  function buildBatchBody(record, from, to) {
+    const rows = []
+    for (let index = from; index <= to; index += 1) {
+      const item = record.steps.get(index)
+      if (!item) continue
+      const action = item.tools.at(-1)
+      const extra = item.tools.length > 1 ? `（共 ${item.tools.length} 次）` : ''
+      const param = action ? keyParamOf(action) : ''
+      const head = action ? `${toolLabel(action.name)}${param ? `：${param}` : ''}${extra}` : '没调工具'
+      let outcome
+      if (!action) outcome = '只在自己想/写'
+      else if (action.state === 'error') outcome = `失败 ${interestingLines(action.error || '', 2).join(' / ') || '出错了'}`
+      else if (action.state === 'running') outcome = '还在跑'
+      else outcome = interestingLines(action.result || '', 2).join(' / ') || '没有输出'
+      rows.push(`- 第${item.step}步 ${head} → ${outcome}`)
+      const think = item.reasoning ? pickSentences(item.reasoning, 1) : ''
+      const say = item.answer ? pickSentences(item.answer, 1) : ''
+      if (think) rows.push(`  它在想：${think}`)
+      if (say) rows.push(`  它在说：${say}`)
+    }
+    const folded = foldEntities(rows.join('\n'))
+    const lines = []
+    if (record.request) lines.push(`用户要的：${oneLine(record.request, 100)}`)
+    const count = Math.max(1, to - from + 1)
+    lines.push(`这一批是第 ${from}~${to} 步，共 ${count} 步；长路径/地址折成 #编号，关键参数、报错、结果要点都在。`)
+    lines.push(folded.text)
+    if (folded.legend) lines.push(`图例：${folded.legend}`)
+    return lines.join('\n')
+  }
+
+  /** 批量总结的提示词：这一批的 N 步合成一次请求，前 N-1 步不会再单独发 */
   function buildBatchPrompt(record, entry, from, to) {
-    const body = buildPromptCompact(record, entry)
+    const count = Math.max(1, to - from + 1)
     return [
-      `省 token++：第 ${from}~${to} 步一共 ${to - from + 1} 步，请把这几步合起来总结一次，不要逐条复述。`,
-      body,
-      '三行格式照旧，但讲的是这几步整体：第一行说这几步合起来在干什么；第二行说一起做的关键动作；第三行说合起来的结果。',
+      `省 token：第 ${from}~${to} 步一共 ${count} 步合并成这一次请求，前 ${count - 1} 步不会再单独发给模型。`,
+      buildBatchBody(record, from, to),
+      '三行格式照旧，但讲的是这几步整体：第一行说这几步合起来在干什么；第二行说一起做的关键动作；第三行说合起来的结果。只看要点，缺的信息就说「看不到」，别猜。',
     ].join('\n')
   }
 
@@ -1303,7 +1339,15 @@ export function apply(ctx) {
       if (!text) throw new Error('模型这次没有返回内容')
       const card = parseCard(text)
       entry.card = card
-      if (job.kind === 'batch') entry.batchRange = [job.from, job.to]
+      if (job.kind === 'batch') {
+        entry.batchRange = [job.from, job.to]
+        // 同一批的另外几步共用这份总结：点开也看得到标题，不用再花钱讲一遍
+        for (const one of record.steps.values()) {
+          if (one.batchTo !== job.step) continue
+          one.batchSummary = card.title
+          pushCard(job.sessionId, job.turn, one.step)
+        }
+      }
       entry.replaying = false
       entry.error = null
       entry.explain = 'done'
@@ -1326,6 +1370,7 @@ export function apply(ctx) {
           if (one.batchTo !== job.step) continue
           one.explain = 'idle'
           one.batchTo = null
+          one.batchSummary = null
           pushCard(job.sessionId, job.turn, one.step)
         }
       }

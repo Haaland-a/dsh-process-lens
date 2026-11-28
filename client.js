@@ -39,7 +39,7 @@ window.__ModuleLoader__.load({
         autoSummarize: false,
         autoSummarizeCount: 3,
         liveExplain: false,
-        batchEvery: 0,
+        batchEvery: 5,
         batchBackground: false,
         style: 'plain',
         activePrompt: '',
@@ -219,7 +219,10 @@ window.__ModuleLoader__.load({
       if (card.explain === 'queued')
       return card.queuePos > 0 ? `排队中…（第 ${card.queuePos} 位）` : '排队中…'
       if (card.explain === 'running') return '正在生成…'
-      if (card.explain === 'batched') return card.batchTo ? `已并进第 ${card.batchTo} 步的总结` : '已并进批量总结'
+      if (card.explain === 'batched') {
+        const gist = card.batchGist ? `：${card.batchGist}` : ''
+        return card.batchTo ? `已并进第 ${card.batchTo} 步的总结${gist}` : '已并进批量总结'
+      }
       if (card.explain === 'failed') return card.explainError || '生成失败'
       if (card.explain === 'skipped') return '这一步只调了工具，本机写的，没花模型调用'
       return ''
@@ -452,10 +455,13 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'pl-row' },
-          h('span', { className: 'pl-key' }, '省 token（精炼）'), h(Rec, { text: '推荐开' }),
+          h('span', { className: 'pl-key' }, '精炼提示词'), h(Rec, { text: '推荐开' }),
           h(
             'label',
-            { className: 'pl-switch', title: '最近 N 步先在本机压缩再发送，不调用模型' },
+            {
+              className: 'pl-switch',
+              title: '只让每次发出去的提示词更短，调用次数不变；想少花调用次数，用上面的「每 N 步合并讲一次」',
+            },
             h('input', {
               type: 'checkbox',
               checked: lens.config.compact === true,
@@ -480,7 +486,7 @@ window.__ModuleLoader__.load({
             onKeyDown: (event) => {
               if (event.key === 'Enter') event.target.blur()
             },
-            title: '精炼最近这么多步再发（1~50）',
+            title: '每次把最近这么多步压成骨架再发（1~50）',
           }),
           h('span', { className: 'pl-unit' }, '步'),
           ...[3, 5, 10, 20].map((n) =>
@@ -525,7 +531,7 @@ window.__ModuleLoader__.load({
                 'div',
                 { className: 'pl-pre-head' },
                 `发给模型的提示词 · 共 ${preview.chars} 字 · 风格：${preview.styleName}` +
-                  (preview.compact ? ` · 省 token 已开（精炼最近 ${preview.compactCount} 步）` : '') +
+                  (preview.compact ? ` · 精炼提示词已开（最近 ${preview.compactCount} 步骨架）` : '') +
                   (preview.compact && preview.fullChars > preview.chars
                     ? ` · 不省是 ${preview.fullChars} 字，实际省了 ${Math.round((1 - preview.chars / preview.fullChars) * 100)}%`
                     : '') +
@@ -912,12 +918,12 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'pl-row' },
-          h('span', { className: 'pl-key' }, '省 token++'), h(Rec, { text: '推荐关', off: true }),
+          h('span', { className: 'pl-key' }, '每 N 步合并讲一次'), h(Rec, { text: '推荐开' }),
           h(
             'label',
             {
               className: 'pl-switch',
-              title: '每攒够 N 步，一次生成这几步的讲解',
+              title: '选 5 = 第 1~5 步只发 1 次请求、第 6~10 步再发 1 次；这 5 步共用一份总结，不会每步都发',
             },
             h('input', {
               type: 'checkbox',
@@ -925,7 +931,7 @@ window.__ModuleLoader__.load({
               onChange: (event) => void saveConfig({ batchEvery: event.target.checked ? batchValue : 0 }),
             }),
             h('span', { className: 'pl-switch-box' }),
-            h('span', { className: 'pl-switch-text' }, batchOn ? `每 ${batchValue} 步` : '关'),
+            h('span', { className: 'pl-switch-text' }, batchOn ? `每 ${batchValue} 步` : '关（每步都讲）'),
           ),
           h('input', {
             type: 'number',
@@ -943,9 +949,19 @@ window.__ModuleLoader__.load({
             onKeyDown: (event) => {
               if (event.key === 'Enter') event.target.blur()
             },
-            title: '每攒够这么多步找一次模型（2~50）',
+            title: '每这么多步合并成一次请求（2~50）',
           }),
-          h('span', { className: 'pl-unit' }, '步一次'),
+          h('span', { className: 'pl-unit' }, '步合并一次'),
+                  ),
+        h(
+          'div',
+          { className: 'pl-hint' },
+          h(
+            'p',
+            null,
+            '选 5：第 1~5 步攒着，到第 5 步才发 1 次请求，一次讲这 5 步；第 6~10 步再发 1 次。不会每步都发。',
+          ),
+          h('p', null, '上面那行「精炼提示词」只是把每次的提示词变短，调用次数不变。'),
                   ),
         h(
           'div',
@@ -1130,7 +1146,7 @@ window.__ModuleLoader__.load({
           { className: 'pl-card-head' },
           h('span', { className: 'pl-step-no' }, `第 ${card.step} 步`),
           h('span', { className: 'pl-card-title' }, card.title),
-          card.batchRange ? h('span', { className: 'pl-batchtag' }, `第 ${card.batchRange[0]}~${card.batchRange[1]} 步合并`) : null,
+          card.batchRange ? h('span', { className: 'pl-batchtag' }, `第 ${card.batchRange[0]}~${card.batchRange[1]} 步合并讲的`) : null,
           card.presetName ? h('span', { className: 'pl-presettag' }, card.presetName) : null,
           card.local ? h('span', { className: 'pl-localtag', title: '这一步没找模型，卡片是本机按工具记录写的' }, '本机') : null,
           pending ? h('span', { className: 'pl-spinner', 'aria-hidden': true }) : null,

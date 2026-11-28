@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 一次性自测：用假 ctx 验收「历史补账」逻辑，不碰真实模型。
  * 跑法：node harness.mjs
  */
@@ -209,11 +209,9 @@ function openStream(path) {
   return { writes, close: () => onClose() }
 }
 
-// 默认开着「工具步骤不找模型」，老用例要验证「调用次数」的地方先关掉；
-// 这项本身在 13b 里单独验，验完也关回去。
-
-// 默认开着「工具步骤不找模型」；下面的用例要数「调了几次模型」，先关掉，13b 里单独验
-await hit('/process-lens/api/config', 'POST', { skipTools: false })
+// 默认开着「工具步骤不找模型」和「每 5 步合并讲一次」；下面的用例要数「调了几次模型」，
+// 先把两项都关掉，它们各自在 13b / 24 里单独验。
+await hit('/process-lens/api/config', 'POST', { skipTools: false, batchEvery: 0 })
 
 // 8) 只连流（= 用户打开面板看原文）绝不能花钱
 const stream = openStream(`/process-lens/stream?session=${SESSION_ID}&turn=1`)
@@ -507,7 +505,7 @@ check(
 )
 check(
    'Host：批量只调一次模型，并记住批到第几步',
-  hostSrc.includes('batchEvery: 0,') &&
+  hostSrc.includes('batchEvery: 5,') &&
     hostSrc.includes('function maybeBatch') &&
     hostSrc.includes('record.batchedTo = target.step') &&
     hostSrc.includes("entry.explain = 'batched'") &&
@@ -582,7 +580,7 @@ check('三步只找一次模型，不是三步三次', llmCalls.length === calls
 const batchPrompt = JSON.stringify(llmCalls[llmCalls.length - 1] ?? {})
 check(
   '批量提示词要求「合起来讲一次」',
-  batchPrompt.includes('省 token++') && batchPrompt.includes('第 1~3 步'),
+  batchPrompt.includes('省 token：') && batchPrompt.includes('第 1~3 步'),
   batchPrompt.slice(0, 60),
 )
 const batchSnap = await hit(`/process-lens/api/snapshot?session=${SESSION_ID}&turn=9`)
@@ -922,6 +920,113 @@ check(
 )
 check('讲完就不再挂「本机」小签', manualCard.local !== true, manualCard.local)
 llmOverride = null
+
+// 24) 每 N 步只发一次请求：选 5 = 第 1~5 步合一次、第 6~10 步合一次，不是每步都发
+await hit('/process-lens/api/config', 'POST', {
+  skipTools: false,
+  compact: false,
+  batchEvery: 5,
+  batchBackground: true,
+})
+const BT = 7
+const bPrompts = []
+llmOverride = {
+  listProviders: () => [{ id: 'deepseek', name: 'DeepSeek' }],
+  listModels: async () => [{ provider: 'deepseek', id: 'chat', name: 'DeepSeek Chat' }],
+  resolveModelInfo: async () => ({ reasoning: { efforts: [{ id: 'low', name: '低' }] } }),
+  stream: async function* (options) {
+    llmCalls.push(options)
+    const prompt = options.messages?.[0]?.content?.[0]?.text ?? ''
+    bPrompts.push(prompt)
+    yield { type: 'text-delta', text: '标题：改了几行代码\n在做什么：看了两处、改了一处\n结果：跑通了\n' }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  },
+}
+pushEvent({ type: 'turn/start', time: 7000, data: { turn: BT } })
+pushEvent({
+  type: 'user/message',
+  time: 7001,
+  data: { role: 'user', content: [{ type: 'text', text: '把这七步都过一遍' }] },
+})
+for (let index = 1; index <= 7; index += 1) {
+  pushEvent({ type: 'step/start', time: 7010 + index * 10, data: { turn: BT, step: index } })
+  pushEvent({
+    type: 'assistant/message',
+    time: 7011 + index * 10,
+    data: {
+      turn: BT,
+      step: index,
+      message: { id: 'MSG-B' + index, content: [{ type: 'text', text: '第 ' + index + ' 步的结论' }] },
+      stream: [],
+    },
+  })
+  pushEvent({ type: 'step/end', time: 7019 + index * 10, data: { turn: BT, step: index } })
+}
+pushEvent({ type: 'turn/end', time: 7200, data: { turn: BT, reason: { kind: 'completed' } } })
+for (let round = 0; round < 8; round += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 70))
+}
+const bSnap24 = await hit('/process-lens/api/snapshot?session=' + SESSION_ID + '&turn=' + BT)
+check(
+  '七步只发两次请求（5 步一次 + 剩下的一起收尾）',
+  bPrompts.length === 2,
+  { calls: bPrompts.length, chars: bPrompts.map((text) => text.length) },
+)
+check(
+  '第一批只说第 1~5 步',
+  String(bPrompts[0] ?? '').includes('第 1~5 步') && !String(bPrompts[0] ?? '').includes('- 第6步'),
+  String(bPrompts[0] ?? '').slice(0, 120),
+)
+check(
+  '第一批把这 5 步都写进去了',
+  ['- 第1步', '- 第2步', '- 第3步', '- 第4步', '- 第5步'].every((mark) =>
+    String(bPrompts[0] ?? '').includes(mark),
+  ),
+  String(bPrompts[0] ?? '').slice(0, 200),
+)
+check(
+  '收尾那批只说第 6~7 步',
+  String(bPrompts[1] ?? '').includes('第 6~7 步') && !String(bPrompts[1] ?? '').includes('- 第5步'),
+  String(bPrompts[1] ?? '').slice(0, 120),
+)
+check(
+  '没并进总结的前几步看得懂去哪了',
+  byStep(bSnap24.json, 1).explain === 'batched' && byStep(bSnap24.json, 1).batchTo === 5,
+  [byStep(bSnap24.json, 1).explain, byStep(bSnap24.json, 1).batchTo],
+)
+check(
+  '并进去的那几步能看到那份总结叫什么',
+  String(byStep(bSnap24.json, 1).batchGist ?? '').length > 0 &&
+    byStep(bSnap24.json, 1).batchGist === byStep(bSnap24.json, 5).title,
+  [byStep(bSnap24.json, 1).batchGist, byStep(bSnap24.json, 5).title],
+)
+check(
+  '总结卡标着「第 1~5 步合并讲的」',
+  Array.isArray(byStep(bSnap24.json, 5).batchRange) &&
+    byStep(bSnap24.json, 5).batchRange[0] === 1 &&
+    byStep(bSnap24.json, 5).batchRange[1] === 5,
+  byStep(bSnap24.json, 5).batchRange,
+)
+llmOverride = null
+await hit('/process-lens/api/config', 'POST', { batchEvery: 0, skipTools: false })
+
+const lensIndexSrc = readFileSync(new URL('./index.js', import.meta.url), 'utf8')
+check(
+  '批次正文只遍历自己那 N 步，不再取「最近 N 步」',
+  lensIndexSrc.includes('function buildBatchBody(record, from, to)') &&
+    !lensIndexSrc.includes('const body = buildPromptCompact(record, entry)'),
+)
+check(
+  '默认就是每 5 步合并一次',
+  lensIndexSrc.includes('batchEvery: 5,') && streamClientSrc.includes('batchEvery: 5,'),
+)
+check(
+  '界面上把两件事分开了',
+  streamClientSrc.includes('每 N 步合并讲一次') &&
+    streamClientSrc.includes('不会每步都发') &&
+    streamClientSrc.includes('精炼提示词') &&
+    streamClientSrc.includes('调用次数不变'),
+)
 
 const failed = checks.filter((item) => !item.ok)
 console.log(`\n${checks.length - failed.length}/${checks.length} 通过`)
