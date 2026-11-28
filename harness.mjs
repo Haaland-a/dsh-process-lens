@@ -6,6 +6,7 @@ import { readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
 process.env.DSH_PROFILE_DIR = join(import.meta.dirname, '.tmp-profile')
+rmSync(process.env.DSH_PROFILE_DIR, { recursive: true, force: true })
 
 const { apply } = await import('./index.js')
 
@@ -208,6 +209,12 @@ function openStream(path) {
   return { writes, close: () => onClose() }
 }
 
+// 默认开着「工具步骤不找模型」，老用例要验证「调用次数」的地方先关掉；
+// 这项本身在 13b 里单独验，验完也关回去。
+
+// 默认开着「工具步骤不找模型」；下面的用例要数「调了几次模型」，先关掉，13b 里单独验
+await hit('/process-lens/api/config', 'POST', { skipTools: false })
+
 // 8) 只连流（= 用户打开面板看原文）绝不能花钱
 const stream = openStream(`/process-lens/stream?session=${SESSION_ID}&turn=1`)
 await new Promise((resolve) => setTimeout(resolve, 120))
@@ -347,21 +354,6 @@ check(
 )
 check('省 token 模式会说明是压缩过的', String(smallPrompt.json?.user ?? '').includes('省 token'), String(smallPrompt.json?.user ?? '').slice(0, 40))
 check('预览会说明这次真的用了压缩版', smallPrompt.json?.compactUsed === true, smallPrompt.json?.compactUsed)
-
-// 13b) 工具内容不外发：只发工具名和成败，不发参数与返回
-await hit('/process-lens/api/config', 'POST', { compact: false, hideTools: true })
-const hiddenFull = await hit(`/process-lens/api/prompt?session=${SESSION_ID}`)
-const hiddenFullUser = String(hiddenFull.json?.user ?? '')
-check('开了以后不带工具返回原文', !hiddenFullUser.includes('日志内容很多行'), hiddenFullUser.includes('日志内容很多行') ? '仍然带着原文' : 'ok')
-check('开了以后不带工具参数', !hiddenFullUser.includes('same.log'), hiddenFullUser.includes('same.log') ? '仍然带着参数' : 'ok')
-check('只留工具名和成败', hiddenFullUser.includes('读文件 → 成功'), hiddenFullUser.split('\n').find((line) => line.includes('读文件')) ?? 'no line')
-check('会明说内容没发、不许猜', hiddenFullUser.includes('不得猜测'), hiddenFullUser.slice(-60))
-await hit('/process-lens/api/config', 'POST', { compact: true, hideTools: true })
-const hiddenSmall = await hit(`/process-lens/api/prompt?session=${SESSION_ID}`)
-const hiddenSmallUser = String(hiddenSmall.json?.user ?? '')
-check('精炼版也一样不外发', !hiddenSmallUser.includes('日志内容很多行') && !hiddenSmallUser.includes('same.log'), hiddenSmallUser.slice(0, 60))
-check('精炼版也只留工具名和成败', hiddenSmallUser.includes('读文件 → 成功'), hiddenSmallUser.split('\n').find((line) => line.includes('读文件')) ?? 'no line')
-await hit('/process-lens/api/config', 'POST', { hideTools: false })
 
 // 14) 自定义提示词存档
 const savedPrompt = await hit('/process-lens/api/prompts', 'POST', { action: 'save', name: '给老板看', text: '一句话说完，别讲细节。' })
@@ -701,6 +693,14 @@ check('没开自动讲时不再常驻一句声明', !v040Client.includes('默认
     check('跟随档按周围底色切换（读宿主底色 + 内联 important）', v040Client.includes('lum > 0.55') && v040Client.includes("el.style.setProperty('background'"))
     check('界面上不再有「翻译成人话」「讲这步」这类口语', !v040Client.includes('翻译成人话') && !v040Client.includes('讲这步'))
 check('提示词要求名词照抄原文', v040Host.includes('名词照抄原文'))
+check('默认就跳过工具步骤（省钱不用自己找开关）', v040Host.includes('skipTools: true,'))
+check('设置行说人话：工具步骤不找模型', v040Client.includes('工具步骤不找模型') && !v040Client.includes('工具内容不外发'))
+check('卡片挂「本机」小签，看得出没找模型', v040Client.includes('pl-localtag') && v040Host.includes('local: true'))
+check(
+  '「全部生成」不把本机写的步算成待生成',
+  v040Client.includes("card.explain !== 'done' && card.explain !== 'skipped'"),
+)
+check('工具步骤的卡片是本机规则写的，不用提示词', !v040Host.includes('内容不外发，只有工具名和成败'))
 check('parseCard 能认「1. 标题：…」这种写法', v040Host.includes('(?:\\d+[.、)]\\s*)?'))
 
 // 20) 流式传输：生成中就把已经吐出来的字推给界面
@@ -862,6 +862,66 @@ check(
     streamClientSrc.includes("action: 'reset-settings'") &&
     streamClientSrc.includes("action: 'delete-prompt'"),
 )
+
+// 13b) 工具步骤不找模型：这一步只调了工具，本机写一句就够，一次调用都不花
+await hit('/process-lens/api/config', 'POST', { compact: false, skipTools: true })
+events.push({ type: 'turn/start', time: 5000, data: { turn: 6 } })
+events.push({
+  type: 'user/message',
+  time: 5001,
+  data: { role: 'user', content: [{ type: 'text', text: '把这份日志看一下' }] },
+})
+events.push({ type: 'step/start', time: 5010, data: { turn: 6, step: 1 } })
+events.push({
+  type: 'tool/call',
+  time: 5011,
+  data: { turn: 6, step: 1, callId: 'g1', name: 'read', arguments: JSON.stringify({ file_path: 'E:/logs/a.log' }) },
+})
+events.push({
+  type: 'tool/result',
+  time: 5012,
+  data: { turn: 6, step: 1, message: { toolCallId: 'g1', content: [{ type: 'text', text: '日志很短。' }] } },
+})
+events.push({ type: 'step/end', time: 5013, data: { turn: 6, step: 1 } })
+events.push({ type: 'turn/end', time: 5014, data: { turn: 6, reason: { kind: 'completed' } } })
+const callsBeforeSkip = llmCalls.length
+await hit('/process-lens/api/explain', 'POST', { session: SESSION_ID, turn: 6 })
+await new Promise((resolve) => setTimeout(resolve, 150))
+const skipSnap = await hit(`/process-lens/api/snapshot?session=${SESSION_ID}&turn=6`)
+const skipCard = (skipSnap.json?.data?.steps ?? []).find((item) => item.step === 1) ?? {}
+check('工具步骤不找模型：状态记成「本机写的」', skipCard.explain === 'skipped', skipCard.explain)
+check('工具步骤一次模型调用都不花', llmCalls.length === callsBeforeSkip, `${llmCalls.length} / ${callsBeforeSkip}`)
+check('卡片直接写着调用了什么', String(skipCard.title ?? '').includes('调用了'), skipCard.title)
+check(
+  '卡片说得出在做什么',
+  String(skipCard.doing ?? '').includes('读文件') && String(skipCard.doing ?? '').includes('a.log'),
+  skipCard.doing,
+)
+check('卡片说得出成没成', String(skipCard.result ?? '').includes('成功'), skipCard.result)
+check('卡片标了「本机」，界面认得出', skipCard.local === true, skipCard.local)
+// 想看这一步照样能手点：手动点某一步不该被跳过
+llmOverride = {
+  listProviders: () => [{ id: 'deepseek', name: 'DeepSeek' }],
+  listModels: async () => [{ provider: 'deepseek', id: 'chat', name: 'DeepSeek Chat' }],
+  resolveModelInfo: async () => ({ reasoning: { efforts: [{ id: 'low', name: '低' }] } }),
+  stream: async function* (options) {
+    llmCalls.push(options)
+    yield { type: 'text-delta', text: '标题：看了一眼日志\n在做什么：读了 a.log\n结果：内容很短\n' }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  },
+}
+const callsBeforeManual = llmCalls.length
+await hit('/process-lens/api/explain', 'POST', { session: SESSION_ID, turn: 6, step: 1 })
+await new Promise((resolve) => setTimeout(resolve, 150))
+const manualSnap = await hit(`/process-lens/api/snapshot?session=${SESSION_ID}&turn=6`)
+const manualCard = (manualSnap.json?.data?.steps ?? []).find((item) => item.step === 1) ?? {}
+check(
+  '手动点那一步还是让模型讲',
+  llmCalls.length > callsBeforeManual && manualCard.explain === 'done',
+  [llmCalls.length, manualCard.explain],
+)
+check('讲完就不再挂「本机」小签', manualCard.local !== true, manualCard.local)
+llmOverride = null
 
 const failed = checks.filter((item) => !item.ok)
 console.log(`\n${checks.length - failed.length}/${checks.length} 通过`)

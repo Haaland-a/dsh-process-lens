@@ -47,7 +47,7 @@ window.__ModuleLoader__.load({
         styles: [],
         compact: false,
         compactCount: 5,
-  hideTools: false,
+  skipTools: true,
         theme: 'auto',
         thinking: false,
       },
@@ -221,6 +221,7 @@ window.__ModuleLoader__.load({
       if (card.explain === 'running') return '正在生成…'
       if (card.explain === 'batched') return card.batchTo ? `已并进第 ${card.batchTo} 步的总结` : '已并进批量总结'
       if (card.explain === 'failed') return card.explainError || '生成失败'
+      if (card.explain === 'skipped') return '这一步只调了工具，本机写的，没花模型调用'
       return ''
     }
 
@@ -493,17 +494,20 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'pl-row' },
-          h('span', { className: 'pl-key' }, '工具内容不外发'), h(Rec, { text: '推荐关', off: true }),
+          h('span', { className: 'pl-key' }, '工具步骤不找模型'), h(Rec, { text: '推荐开' }),
           h(
             'label',
-            { className: 'pl-switch', title: '只发工具名和成败，不发参数与返回' },
+            {
+              className: 'pl-switch',
+              title: '调用了工具的步骤只在本机写一句话，不发给模型；想细看，点那一步的「生成讲解」照样会讲',
+            },
             h('input', {
               type: 'checkbox',
-              checked: lens.config.hideTools === true,
-              onChange: (event) => void saveConfig({ hideTools: event.target.checked }),
+              checked: lens.config.skipTools !== false,
+              onChange: (event) => void saveConfig({ skipTools: event.target.checked }),
             }),
             h('span', { className: 'pl-switch-box' }),
-            h('span', { className: 'pl-switch-text' }, lens.config.hideTools ? '开' : '关'),
+            h('span', { className: 'pl-switch-text' }, lens.config.skipTools !== false ? '开' : '关'),
           ),
         ),
         h(
@@ -1128,6 +1132,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 'pl-card-title' }, card.title),
           card.batchRange ? h('span', { className: 'pl-batchtag' }, `第 ${card.batchRange[0]}~${card.batchRange[1]} 步合并`) : null,
           card.presetName ? h('span', { className: 'pl-presettag' }, card.presetName) : null,
+          card.local ? h('span', { className: 'pl-localtag', title: '这一步没找模型，卡片是本机按工具记录写的' }, '本机') : null,
           pending ? h('span', { className: 'pl-spinner', 'aria-hidden': true }) : null,
         ),
         // 原文在上：不花额度也能看清这一步到底做了什么
@@ -1632,7 +1637,8 @@ window.__ModuleLoader__.load({
       const snapshot = lens.snapshotKey === `${lens.sessionId}:${lens.turn}` ? lens.snapshot : null
       const steps = snapshot?.steps ?? []
       const finished = snapshot?.status === 'done'
-      const pendingCount = steps.filter((card) => card.explain !== 'done').length
+        // 本机写的那几步（只调了工具）不算「还没生成」，不然按钮会骗人
+        const pendingCount = steps.filter((card) => card.explain !== 'done' && card.explain !== 'skipped').length
       // 「打开时显示最近 N 步」：N 从设置里来，0 表示一进来就全给
       const recent = Number.isFinite(Number(lens.config.recent)) ? Number(lens.config.recent) : 8
       const pinnedStep = pinnedAt && pinnedAt.key === `${lens.sessionId ?? ''}:${lens.turn ?? ''}` ? pinnedAt.step : null
@@ -1882,6 +1888,7 @@ window.__ModuleLoader__.load({
 .pl-mini-ghost { border-style: dashed; }
 .pl-foot-btns { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 .pl-presettag { flex: none; padding: 0 6px; border-radius: 999px; font-size: 10px; line-height: 16px; color: #6d28d9; background: rgba(139,92,246,.13); }
+.pl-localtag { flex: none; padding: 0 6px; border-radius: 999px; font-size: 10px; line-height: 16px; color: #2f8a5b; background: rgba(64,160,110,.16); }
 .pl-menu { margin-top: 7px; padding: 6px; border-radius: 10px; border: 1px solid rgba(127,127,127,.26); background: var(--dsw-alias-bg-layer-2, rgba(127,127,127,.07)); display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow: auto; }
 .pl-menu-head { font-size: 10.5px; opacity: .5; padding: 3px 7px 2px; }
 .pl-menu-item { font: inherit; font-size: 11.5px; text-align: left; padding: 5px 8px; border-radius: 7px; border: 0; background: transparent; color: inherit; cursor: pointer; line-height: 1.35; }

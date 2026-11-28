@@ -14,7 +14,8 @@
  * @module dsh-process-lens
  */
 
-import { readFile, writeFile, mkdir, stat } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
+import { writeFile, mkdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -73,8 +74,11 @@ const DEFAULTS = Object.freeze({
   theme: 'auto',
   /** 讲解时让模型先思考再回答（默认关：更快更省钱） */
   thinking: false,
-  /** 工具内容不外发：只发工具名和成败，参数与返回都不发 */
-  hideTools: false,
+  /**
+   * 工具步骤不找模型：这一小步只是调了工具，界面本来就写着调用了什么工具，
+   * 再让模型复述一遍等于白花一次调用。true = 本机写一句话，false = 照旧讲解。
+   */
+  skipTools: true,
 })
 
 /** 原文存多少：够看全文，又不至于把内存吃穿 */
@@ -320,15 +324,13 @@ export function apply(ctx) {
 
   // ── 设置持久化 ──────────────────────────────────────────────────────────────
 
-  void (async () => {
-    try {
-      const raw = await readFile(settingsFile(), 'utf8')
-      const parsed = JSON.parse(raw)
-      for (const key of Object.keys(DEFAULTS)) {
-        if (parsed?.[key] !== undefined) settings[key] = parsed[key]
-      }
-    } catch {}
-  })()
+  // 同步读：异步读会在启动后几百毫秒才合并回来，把用户刚拨的开关又盖回旧值
+  try {
+    const parsed = JSON.parse(readFileSync(settingsFile(), 'utf8'))
+    for (const key of Object.keys(DEFAULTS)) {
+      if (parsed?.[key] !== undefined) settings[key] = parsed[key]
+    }
+  } catch {}
 
   // ── 风格与提示词 ────────────────────────────────────────────────────────────
 
@@ -601,6 +603,8 @@ export function apply(ctx) {
       presetName: step.presetName ?? '',
       /** 上一次讲解实际发出去多少字（省 token 模式下能直接看出效果） */
       chars: Number(step.promptChars) || 0,
+      /** 这一步的三行是本机按工具记录写的，没有花模型调用 */
+      local: step.card?.local === true,
       tools: toolsView(step),
       // 原文：不花 token 也能看的东西
       raw: {
@@ -673,8 +677,8 @@ export function apply(ctx) {
       styles: stylesView(),
       prompts: promptList(),
       compact: settings.compact === true,
-      compactCount: settings.compactCount,
-      hideTools: settings.hideTools === true,
+      skipTools: settings.skipTools !== false,
+      theme: themeOf(settings.theme),
       theme: themeOf(settings.theme),
       thinking: settings.thinking === true,
       allSteps: settings.allSteps === true,
@@ -819,14 +823,6 @@ export function apply(ctx) {
     if (step.answer) lines.push(`助手在这一步写下的话（节选）：${clip(step.answer, ANSWER_CHARS)}`)
     if (step.tools.length === 0) {
       lines.push('这一步没有调用任何工具，只是模型自己在想/在写。')
-    } else if (settings.hideTools === true) {
-      // 工具内容不外发：只告诉模型调用了什么、成没成，参数和返回都不发送
-      lines.push('这一步调用过的操作（内容不外发，只有工具名和成败）：')
-      for (const tool of step.tools.slice(-MAX_TOOLS)) {
-        const state = tool.state === 'error' ? '失败' : tool.state === 'running' ? '还在进行' : '成功'
-        lines.push(`- ${toolLabel(tool.name)} → ${state}`)
-      }
-      lines.push('参数和返回都没有发送，具体内容不得猜测或补写。')
     } else {
       lines.push('这一步调用过的操作：')
       for (const tool of step.tools.slice(-MAX_TOOLS)) {
@@ -956,12 +952,10 @@ export function apply(ctx) {
     const rows = recent.map((item) => {
       const action = item.tools.at(-1)
       const extra = item.tools.length > 1 ? `（共 ${item.tools.length} 次）` : ''
-      const hideTools = settings.hideTools === true
-      const param = action && !hideTools ? keyParamOf(action) : ''
+      const param = action ? keyParamOf(action) : ''
       const head = action ? `${toolLabel(action.name)}${param ? `：${param}` : ''}${extra}` : '没调工具'
       let outcome
       if (!action) outcome = '只在自己想/写'
-      else if (hideTools) outcome = action.state === 'error' ? '失败' : action.state === 'running' ? '还在跑' : '成功'
       else if (action.state === 'error') outcome = `失败 ${interestingLines(action.error || '', 2).join(' / ') || '出错了'}`
       else if (action.state === 'running') outcome = '还在跑'
       else outcome = interestingLines(action.result || '', 2).join(' / ') || '没有输出'
@@ -1005,11 +999,7 @@ export function apply(ctx) {
     )
     lines.push(folded.text)
     if (folded.legend) lines.push(`图例：${folded.legend}`)
-    lines.push(
-      settings.hideTools === true
-        ? '工具的参数和返回都没有发送，只能看到工具名和成败，具体内容不得猜测。按三行格式讲给用户听。'
-        : '只看要点，缺的信息就说「看不到」，别猜。按三行格式讲给用户听。',
-    )
+    lines.push('只看要点，缺的信息就说「看不到」，别猜。按三行格式讲给用户听。')
     return lines.join('\n')
   }
 
@@ -1058,12 +1048,77 @@ export function apply(ctx) {
     }
   }
 
-  function enqueue(sessionId, turn, step, force, again, preset, priority) {
+  /**
+   * 工具步骤本地小结：只用本机已有的工具名/参数/成败，一次模型都不调。
+   * 卡片还是那三行（标题 / 在做什么 / 结果），只是作者从模型换成了本机规则。
+   */
+  function localToolCard(entry) {
+    const tools = entry.tools ?? []
+    const labels = []
+    for (const tool of tools) {
+      const label = toolLabel(tool.name)
+      if (!labels.includes(label)) labels.push(label)
+    }
+    const times = tools.length > 1 ? `（共 ${tools.length} 次）` : ''
+    const detail = tools
+      .slice(0, 3)
+      .map((tool) => {
+        const param = keyParamOf(tool)
+        return `${toolLabel(tool.name)}${param ? `：${param}` : ''}`
+      })
+      .join('、')
+    const more = tools.length > 3 ? ` 等 ${tools.length} 次` : ''
+    const bad = tools.filter((tool) => tool.state === 'error')
+    const running = tools.filter((tool) => tool.state === 'running')
+    let result = `都成功了${times}`
+    if (running.length > 0) result = `还有 ${running.length} 个在跑`
+    else if (bad.length > 0) {
+      const failed = bad
+        .slice(0, 2)
+        .map((tool) => toolLabel(tool.name))
+        .join('、')
+      result = `${tools.length - bad.length} 个成功，${bad.length} 个失败：${failed}`
+    }
+    return {
+      title: `调用了${labels.slice(0, 2).join('、') || '工具'}`,
+      doing: `${detail}${more}`,
+      result,
+      local: true,
+    }
+  }
+
+  /**
+   * 工具步骤不找模型：这一步只是调了工具，界面上本来就写着调用了什么，
+   * 再让模型复述一遍等于白花一次调用。状态记 skipped；想细看，点那一步照样能讲。
+   */
+  function skipToolStep(sessionId, turn, step, entry) {
+    if (!entry || !(entry.tools?.length > 0)) return false
+    entry.card = localToolCard(entry)
+    entry.explain = 'skipped'
+    entry.error = null
+    entry.promptChars = 0
+    pushCard(sessionId, turn, step)
+    return true
+  }
+
+  function enqueue(sessionId, turn, step, force, again, preset, priority, manual) {
     if (replaying) return
     const record = sessions.get(String(sessionId))?.turns.get(turn)
     const entry = record?.steps.get(step)
     if (!entry) return
     const redo = again === true
+    // 工具步骤不找模型：界面上本来就写着调用了什么工具，模型只会照着复述一遍。
+    // 手动点某一步（manual）例外 —— 那是你明确要看这一步。
+    if (
+      redo !== true &&
+      manual !== true &&
+      settings.skipTools !== false &&
+      entry.tools?.length > 0 &&
+      entry.explain !== 'done'
+    ) {
+      skipToolStep(sessionId, turn, step, entry)
+      return
+    }
     // 重新讲一遍：讲过的也能再排，旧的三行先留着，等新的到了再换
     if (!redo && (entry.explain === 'done' || entry.explain === 'running')) return
     if (!redo && force !== true) {
@@ -1139,7 +1194,15 @@ export function apply(ctx) {
     const from = Math.max(1, (Number(record.batchedTo) || 0) + 1)
     const lastStep = done[done.length - 1].step
     const last = Number.isFinite(Number(upto)) ? Math.min(Number(upto), lastStep) : lastStep
-    const list = done.filter((entry) => entry.step >= from && entry.step <= last)
+    // 工具步骤不找模型：批量总结也别把它们塞进去，本地写一句话就够了
+    if (settings.skipTools !== false) {
+      for (const entry of done) {
+        if (entry.tools?.length > 0 && entry.explain !== 'done') skipToolStep(sessionId, turn, entry.step, entry)
+      }
+    }
+    const list = done.filter(
+      (entry) => entry.step >= from && entry.step <= last && !(settings.skipTools !== false && entry.tools?.length > 0),
+    )
     if (list.length < (flush ? 1 : every)) return false
     const target = list[list.length - 1]
     if (target.explain === 'done' || target.explain === 'running' || target.explain === 'queued') return false
@@ -1634,7 +1697,7 @@ export function apply(ctx) {
         if (body.theme === 'auto' || body.theme === 'light' || body.theme === 'dark') settings.theme = body.theme
         if (typeof body.thinking === 'boolean') settings.thinking = body.thinking
         if (typeof body.allSteps === 'boolean') settings.allSteps = body.allSteps
-    if (typeof body.hideTools === 'boolean') settings.hideTools = body.hideTools
+        if (typeof body.skipTools === 'boolean') settings.skipTools = body.skipTools
         if (Number.isFinite(Number(body.maxTokens))) settings.maxTokens = Math.min(4000, Math.max(400, Number(body.maxTokens)))
         saveSettingsSoon()
         writeJson(res, 200, { ok: true, settings: publicSettings() })
@@ -1699,7 +1762,7 @@ export function apply(ctx) {
           entry.explain = 'idle'
           entry.error = null
         }
-        for (const step of targets) enqueue(sessionId, turn, step, true, again, preset, priority)
+        for (const step of targets) enqueue(sessionId, turn, step, true, again, preset, priority, only !== null)
         writeJson(res, 200, { ok: true, steps: targets })
         return
       }
@@ -1728,7 +1791,7 @@ export function apply(ctx) {
           prompts: promptList(),
           compact: settings.compact === true,
           compactCount: settings.compactCount,
-          hideTools: settings.hideTools === true,
+          skipTools: settings.skipTools !== false,
           sample: Boolean(lastStep) === false,
           system,
           user,
