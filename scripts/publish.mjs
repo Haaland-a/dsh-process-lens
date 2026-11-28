@@ -73,18 +73,26 @@ if (found.status === 200) {
 }
 
 // 3) 挂包
+//    挂两份：带版本号的（钉 tag 用）和不带版本号的（releases/latest/download 用）。
+//    市场条目（awesome-dsh-plugin）指向不带版本号的那份，否则下次发版就 404。
+const assetNames = [tgzName, `${pkg.name}.tgz`]
+const bytes = readFileSync(tgz)
 const assets = await api(`/repos/${REPO}/releases/${rel.id}/assets`)
-if (Array.isArray(assets.json) && assets.json.some((a) => a.name === tgzName)) {
-  console.log('资产已在：' + tgzName)
-} else {
-  const up = await fetch(`https://uploads.github.com/repos/${REPO}/releases/${rel.id}/assets?name=${encodeURIComponent(tgzName)}`, {
+const have = new Set((Array.isArray(assets.json) ? assets.json : []).map((a) => a.name))
+for (const name of assetNames) {
+  if (have.has(name)) {
+    console.log('资产已在：' + name)
+    continue
+  }
+  const up = await fetch(`https://uploads.github.com/repos/${REPO}/releases/${rel.id}/assets?name=${encodeURIComponent(name)}`, {
     method: 'POST',
     headers: { ...H, 'content-type': 'application/gzip' },
-    body: readFileSync(tgz),
+    body: bytes,
   })
   const j = await up.json()
   if (j.state !== 'uploaded') throw new Error(`上传失败：${up.status} ${JSON.stringify(j)}`)
   console.log('资产已上传：' + j.name + ' ' + j.size + ' B')
 }
 
-console.log('下载直链：' + `https://github.com/${REPO}/releases/download/${TAG}/${tgzName}`)
+console.log('下载直链（钉 tag）：' + `https://github.com/${REPO}/releases/download/${TAG}/${tgzName}`)
+console.log('稳定直链（始终最新）：' + `https://github.com/${REPO}/releases/latest/download/${pkg.name}.tgz`)
