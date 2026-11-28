@@ -1,4 +1,4 @@
-﻿# 上架申请材料 · dsh-process-lens（过程讲解）
+# 上架申请材料 · dsh-process-lens（过程讲解）
 
 按插件市场表单的顺序整理，能直接照着填。所有数字都来自仓库里跑得起来的自测，不写没验过的东西。
 
@@ -120,4 +120,4 @@ https://github.com/AI-Scarlett/DSH-Store/issues/new?template=plugin-submission.y
 | 0.2.1-rc.x | unknown | 没有在同版本上跑过，不由范围命中推断 |
 | 0.3.x 及以后 | unknown | 宿主 API 可能变，出了再看 |
 
-SHA256：`67d13b176f65de8cbdd37a238c4388c688bdc4d7f4282c8fc50f639ae796e61e`
+SHA256：`a5c8c28a73b10e37cde63de47ff475a03e898651bf0fa8657aa425e68e457145`
