@@ -1169,6 +1169,205 @@ check(
   '生成中 + 2 秒轮询',
 )
 
+// 26) 全量功能验收：设置项逐个往返（含越界夹取与非法值忽略）
+const configCases = [
+  [{ mode: 'onDemand' }, (s) => s.mode === 'onDemand', '讲解模式：按需'],
+  [{ mode: '乱传' }, (s) => s.mode === 'onDemand', '讲解模式：非法值忽略'],
+  [{ autoOpen: true }, (s) => s.autoOpen === true, '自动弹出：开'],
+  [{ autoOpen: false }, (s) => s.autoOpen === false, '自动弹出：关'],
+  [{ batchEvery: 999 }, (s) => s.batchEvery === 50, '合并步数：上限 50'],
+  [{ batchEvery: -3 }, (s) => s.batchEvery === 0, '合并步数：负数夹到 0'],
+  [{ batchEvery: 5 }, (s) => s.batchEvery === 5, '合并步数：存得住'],
+  [{ maxTokens: 99999 }, (s) => s.maxTokens === 4000, '输出上限：夹到 4000'],
+  [{ maxTokens: 10 }, (s) => s.maxTokens === 400, '输出上限：下限 400'],
+  [{ style: 'pro' }, (s) => s.style === 'pro', '总结风格：存得住'],
+  [{ style: 'nope' }, (s) => s.style === 'pro', '总结风格：非法值忽略'],
+  [{ theme: 'dark' }, (s) => s.theme === 'dark', '外观：存得住'],
+  [{ theme: 'rainbow' }, (s) => s.theme === 'dark', '外观：非法值忽略'],
+  [{ thinking: true }, (s) => s.thinking === true, '模型思考：开'],
+  [{ allSteps: false }, (s) => s.allSteps === false, '全部步骤：关'],
+  [{ skipTools: false }, (s) => s.skipTools === false, '工具步骤找模型：开'],
+  [{ batchBackground: true }, (s) => s.batchBackground === true, '后台跑：开'],
+  [{ activePrompt: '根本没这个' }, (s) => s.activePrompt === '', '不存在的提示词不会被选中'],
+]
+for (const [body, pick, name] of configCases) {
+  const result = await hit('/process-lens/api/config', 'POST', body)
+  check(`设置项：${name}`, pick(result.json?.settings ?? {}), result.json?.settings)
+}
+await hit('/process-lens/api/config', 'POST', { compact: true, compactCount: 0 })
+const compactLow = await hit(`/process-lens/api/prompt?session=${SESSION_ID}`)
+check('精炼行数：下限 1', compactLow.json?.compactCount === 1, compactLow.json?.compactCount)
+await hit('/process-lens/api/config', 'POST', { compactCount: 99 })
+const compactHigh = await hit(`/process-lens/api/prompt?session=${SESSION_ID}`)
+check('精炼行数：上限 50', compactHigh.json?.compactCount === 50, compactHigh.json?.compactCount)
+await hit('/process-lens/api/config', 'POST', {
+  thinking: false,
+  allSteps: true,
+  skipTools: true,
+  batchBackground: false,
+  style: 'gentle',
+  theme: 'auto',
+  maxTokens: 1600,
+  batchEvery: 0,
+})
+
+// 27) 提示词工作台：预览、新建、改名、切回、删掉
+const promptBase = await hit(`/process-lens/api/prompt?session=${SESSION_ID}`)
+check('提示词预览：算得出这次发多少字', typeof promptBase.json?.chars === 'number' && promptBase.json.chars > 100, promptBase.json?.chars)
+check(
+  '提示词预览：给出「不省 token 时」的字数对照',
+  typeof promptBase.json?.fullChars === 'number' && promptBase.json.fullChars >= promptBase.json.chars - 1,
+  [promptBase.json?.chars, promptBase.json?.fullChars],
+)
+check('提示词预览：三行格式写在正文里', String(promptBase.json?.user ?? '').includes('第 1 步') || String(promptBase.json?.user ?? '').includes('三行'), String(promptBase.json?.user ?? '').slice(0, 60))
+const builtPrompt = await hit('/process-lens/api/prompts', 'POST', {
+  action: 'save',
+  name: '三行测试',
+  text: '第一行说重点\n第二行说做法\n第三行说结果',
+})
+const savedPromptId = String(builtPrompt.json?.settings?.prompts?.at(-1)?.id ?? '')
+check('提示词存档：能新建', Boolean(savedPromptId), builtPrompt.json?.prompts)
+check('提示词存档：新建后自动选中', builtPrompt.json?.settings?.activePrompt === savedPromptId, builtPrompt.json?.settings?.activePrompt)
+const promptApplied = await hit(`/process-lens/api/prompt?session=${SESSION_ID}`)
+check('提示词存档：选中后真的用上', String(promptApplied.json?.system ?? '').includes('第一行说重点'), String(promptApplied.json?.system ?? '').slice(0, 60))
+const renamedPrompt = await hit('/process-lens/api/prompts', 'POST', {
+  action: 'save',
+  id: savedPromptId,
+  name: '改过名',
+  text: '第一行说重点\n第二行说做法\n第三行说结果（改）',
+})
+check(
+  '提示词存档：能改名改正文',
+  renamedPrompt.json?.prompts?.some((item) => item.id === savedPromptId && item.name === '改过名'),
+  renamedPrompt.json?.prompts,
+)
+const emptyPrompt = await hit('/process-lens/api/prompts', 'POST', { action: 'save', name: '空的', text: '   ' })
+check('提示词存档：空的存不进去', emptyPrompt.status === 400 && String(emptyPrompt.json?.error ?? '').includes('不能是空'), emptyPrompt.json)
+const selectPrompt = await hit('/process-lens/api/prompts', 'POST', { action: 'select', id: savedPromptId })
+check('提示词存档：能切回去', selectPrompt.json?.settings?.activePrompt === savedPromptId, selectPrompt.json?.settings?.activePrompt)
+const selectMissing = await hit('/process-lens/api/prompts', 'POST', { action: 'select', id: 'p不存在' })
+check('提示词存档：选了不存在的就退回内置', selectMissing.json?.settings?.activePrompt === '', selectMissing.json?.settings?.activePrompt)
+const deletePrompt = await hit('/process-lens/api/prompts', 'POST', { action: 'delete', id: savedPromptId })
+check('提示词存档：能删掉', deletePrompt.json?.prompts?.every((item) => item.id !== savedPromptId), deletePrompt.json?.prompts)
+const badAction = await hit('/process-lens/api/prompts', 'POST', { action: '不存在' })
+check('提示词存档：乱操作被拒', badAction.status === 400, badAction.json)
+
+// 28) 边界与失败：不存在的会话、报错的模型、重试
+const emptySnap = await hit('/process-lens/api/snapshot?session=没有这个会话&turn=1')
+check('不存在的会话给空快照，不报错', Array.isArray(emptySnap.json?.data?.steps) && emptySnap.json.data.steps.length === 0, emptySnap.json?.data)
+const unknownMessage = await hit(`/process-lens/api/turn?session=${SESSION_ID}&messageId=MSG-不存在`)
+check('不认识的 messageId 不炸，退回最新一轮', typeof unknownMessage.json?.turn === 'number', unknownMessage.json)
+pushPlainTurn(12, 1)
+llmOverride = {
+  listProviders: () => [{ id: 'deepseek', name: 'DeepSeek' }],
+  listModels: async () => [{ provider: 'deepseek', id: 'chat', name: 'DeepSeek Chat' }],
+  resolveModelInfo: async () => ({ reasoning: { efforts: [{ id: 'low', name: '低' }] } }),
+  stream: async function* () {
+    throw new Error('模型炸了')
+  },
+}
+await hit('/process-lens/api/explain', 'POST', { session: SESSION_ID, turn: 12, step: 1 })
+await settle(3)
+const failedCard = await hit(`/process-lens/api/snapshot?session=${SESSION_ID}&turn=12`)
+check(
+  '模型报错：卡片标失败并写出原因',
+  byStep(failedCard.json, 1).explain === 'failed' && String(byStep(failedCard.json, 1).explainError ?? '').includes('模型炸了'),
+  [byStep(failedCard.json, 1).explain, byStep(failedCard.json, 1).explainError],
+)
+llmOverride = {
+  listProviders: () => [{ id: 'deepseek', name: 'DeepSeek' }],
+  listModels: async () => [{ provider: 'deepseek', id: 'chat', name: 'DeepSeek Chat' }],
+  resolveModelInfo: async () => ({ reasoning: { efforts: [{ id: 'low', name: '低' }] } }),
+  stream: async function* (options) {
+    llmCalls.push(options)
+    yield { type: 'text-delta', text: '标题：重试成功\n在做什么：又讲了一遍\n结果：这次通了\n' }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  },
+}
+await hit('/process-lens/api/explain', 'POST', { session: SESSION_ID, turn: 12, step: 1 })
+await settle(3)
+const retriedCard = await hit(`/process-lens/api/snapshot?session=${SESSION_ID}&turn=12`)
+check(
+  '失败后再点一次能重试成功',
+  byStep(retriedCard.json, 1).explain === 'done' && String(byStep(retriedCard.json, 1).title ?? '').includes('重试成功'),
+  [byStep(retriedCard.json, 1).explain, byStep(retriedCard.json, 1).title],
+)
+const callsBeforeIdle = llmCalls.length
+await hit('/process-lens/api/explain', 'POST', { session: SESSION_ID, turn: 12 })
+await settle(2)
+check('整轮「全部生成」不会重讲已经讲好的', llmCalls.length === callsBeforeIdle, llmCalls.length - callsBeforeIdle)
+
+// 29) 事件流：连上先给快照，一轮结束推 turn
+const eventStream = openStream(`/process-lens/stream?session=${SESSION_ID}&turn=13`)
+check('连上就先推一份快照（snap）', eventStream.writes.some((chunk) => chunk.includes('event: snap')), eventStream.writes.length)
+pushPlainTurn(13, 1)
+await settle(2)
+check('一轮结束会推 turn 事件', eventStream.writes.some((chunk) => chunk.includes('event: turn')), eventStream.writes.length)
+eventStream.close()
+llmOverride = null
+
+// 30) 界面上这些入口和文案都得在
+const uiWords = [
+  '打开时自动生成',
+  '开着时逐步生成',
+  '后台跑',
+  '每 N 步合并讲一次',
+  '精炼提示词',
+  '工具步骤不找模型',
+  '总结风格',
+  '打开时显示',
+]
+const missingWords = uiWords.filter((word) => !streamClientSrc.includes(word))
+check('设置页每个开关都在', missingWords.length === 0, missingWords)
+check(
+  '三个入口都在（回答下 / 输入框下 / 浮层）',
+  streamClientSrc.includes('conversation.chat.assistant-actions') &&
+    streamClientSrc.includes('conversation.composer.dock') &&
+    streamClientSrc.includes('shell.overlay'),
+  'slots',
+)
+check('面板里有「过程 / 设置」两页', streamClientSrc.includes('过程') && streamClientSrc.includes('设置'))
+check('面板顶部能自己挑讲解模型', streamClientSrc.includes('/models') && streamClientSrc.includes('讲解模型'))
+check(
+  '输入框那条三种状态文案都在',
+  streamClientSrc.includes('生成中') && streamClientSrc.includes('排队') && streamClientSrc.includes('过程'),
+)
+check('卡片上有「优先 / 重新生成」', streamClientSrc.includes('优先') && streamClientSrc.includes('重新生成'))
+check('卡片会说明「已并进第 N 步」', streamClientSrc.includes('已并进第'))
+
+// 31) 发行清单：exports / files / 语言包 / 图
+const readText = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8').replace(/^\uFEFF/, '')
+const pkg = JSON.parse(readText('./package.json'))
+const exportTargets = Object.values(pkg.exports ?? {}).filter((item) => typeof item === 'string' && !item.includes('*'))
+const missingExports = exportTargets.filter((rel) => {
+  try {
+    readFileSync(new URL(rel, import.meta.url))
+    return false
+  } catch {
+    return true
+  }
+})
+check('包清单：exports 指的都是真文件', missingExports.length === 0, missingExports)
+check(
+  '包清单：files 覆盖运行文件与文档',
+  ['index.js', 'client.js', 'cordis.patch.yml', 'locale', 'docs', 'icon.svg', 'README.md', 'LICENSE'].every((word) =>
+    (pkg.files ?? []).some((item) => String(item).startsWith(word)),
+  ),
+  pkg.files,
+)
+const zhLocale = JSON.parse(readText('./locale/zh.json'))
+const enLocale = JSON.parse(readText('./locale/en.json'))
+check(
+  '语言包：中英文都能解析且带标题说明',
+  Boolean(zhLocale.meta?.title && zhLocale.meta?.description && enLocale.meta?.title && enLocale.meta?.description),
+)
+check(
+  '详情页与功能图都在',
+  readFileSync(new URL('./docs/DETAIL.zh.md', import.meta.url), 'utf8').includes('preview.svg') &&
+    readFileSync(new URL('./docs/preview.svg', import.meta.url), 'utf8').includes('<svg'),
+)
+check('插件图标是合法 svg', readFileSync(new URL('./icon.svg', import.meta.url), 'utf8').includes('<svg'))
+
 const failed = checks.filter((item) => !item.ok)
 console.log(`\n${checks.length - failed.length}/${checks.length} 通过`)
 if (failed.length) process.exitCode = 1
