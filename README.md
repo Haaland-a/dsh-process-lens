@@ -1,9 +1,9 @@
 # 过程讲解器（dsh-process-lens）
 
 [![DSH plugin](https://img.shields.io/badge/DSH-plugin-4f7cff)](https://github.com/Haaland-a/dsh-process-lens)
-[![version](https://img.shields.io/badge/version-0.10.3-2ea043)](./package.json)
+[![version](https://img.shields.io/badge/version-0.10.4-2ea043)](./package.json)
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
-[![self test](https://img.shields.io/badge/self--test-216%2F216-2ea043)](./harness.mjs)
+[![self test](https://img.shields.io/badge/self--test-218%2F218-2ea043)](./harness.mjs)
 
 把 AI 干活的每一步摊开给你看：**原文点一下就看全文**（不花额度），**人话解说按需生成**（点哪步才讲哪步），**用哪个模型讲由你单独挑**。
 
@@ -483,6 +483,17 @@ glob=按名字找文件、web_search=上网搜、todo_write=列待办），省�
 - 并进总结的那几步，卡片上直接写「已并进第 5 步的总结：改了几行代码」——不点开也知道讲了什么；
 - 行下面多一句大白话，写清「选 5 就是第 1~5 步发一次、第 6~10 步再发一次，不会每步都发」。
 
+### 4.23 v0.10.4：设置「全不生效」的真凶也是 BOM（新）
+
+0.10.3 修的是**插件清单**带 BOM 导致整条不加载；这一版修同一类问题的另一半——**你的设置存档**带 BOM：
+
+- 症状：开关拨了、模型也选了，重启后又回到默认；看上去「设置没保存」，其实**存下来了，只是没读进去**。
+- 原理：`~/.dsh/process-lens.json` 开头若有 `EF BB BF`，读的时候 `JSON.parse` 直接抛错，而那个 `try/catch` 是故意吞掉的（不能让坏存档把插件带崩），于是悄悄退回默认值。
+- 修法：读之前先剥 BOM；如果发现这份存档确实带 BOM，读成功后**顺手改写一遍**把它洗掉，下次就不用再猜。
+- 新增 2 条回归断言（216 → 218）：设置必须能容错 BOM、读到带 BOM 的存档要自动洗掉。
+
+> 一句话记法：**这个插件里所有 JSON 都不许有 BOM**。清单带 BOM = 装上不显示；存档带 BOM = 设置不生效。
+
 ### 4.21 v0.10.2：把「所有功能」逐条测了一遍（新）
 
 这一版没改界面，只补验收：新加 51 条断言，连同原来的 162 条，`node harness.mjs` 现在 **213 条全过**。补的是「一个个开关、一个个按钮」的往返：
@@ -535,7 +546,7 @@ glob=按名字找文件、web_search=上网搜、todo_write=列待办），省�
 dsh plugin add link:E:/Personal/Desktop/dsh/dsh-process-lens --profile desktop
 ```
 
-装发行包：`npm pack` 会产出 `dsh-process-lens-0.10.3.tgz`，在「设置 → 插件 → 安装 bundle」里指向这个文件即可（和从市场安装走的是同一条路）。包里只带运行需要的东西：`index.js`、`client.js`、patch、两份语言包、详情页与功能图、图标、README、LICENSE；`harness.mjs` 不进包。
+装发行包：`npm pack` 会产出 `dsh-process-lens-0.10.4.tgz`，在「设置 → 插件 → 安装 bundle」里指向这个文件即可（和从市场安装走的是同一条路）。包里只带运行需要的东西：`index.js`、`client.js`、patch、两份语言包、详情页与功能图、图标、README、LICENSE；`harness.mjs` 不进包。
 
 要投稿到插件市场，材料在同目录 [SUBMIT.md](./SUBMIT.md)。
 

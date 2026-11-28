@@ -325,11 +325,16 @@ export function apply(ctx) {
   // ── 设置持久化 ──────────────────────────────────────────────────────────────
 
   // 同步读：异步读会在启动后几百毫秒才合并回来，把用户刚拨的开关又盖回旧值
+  // 存档若被编辑器加上 UTF-8 BOM，JSON.parse 会抛错并被下面吞掉 —— 表现就是「设置全不生效」，
+  // 所以读取前先剥掉 BOM（0.10.4）。
   try {
-    const parsed = JSON.parse(readFileSync(settingsFile(), 'utf8'))
+    const raw = readFileSync(settingsFile(), 'utf8')
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, ''))
     for (const key of Object.keys(DEFAULTS)) {
       if (parsed?.[key] !== undefined) settings[key] = parsed[key]
     }
+    // 顺手把 BOM 洗掉，省得下次又被同一个问题咬
+    if (raw.charCodeAt(0) === 0xfeff) saveSettingsSoon()
   } catch {}
 
   // ── 风格与提示词 ────────────────────────────────────────────────────────────

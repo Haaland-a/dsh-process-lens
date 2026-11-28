@@ -1393,6 +1393,16 @@ check(
   JSON.parse(readText('./package.json')).dsh?.bundle?.patch === './cordis.patch.yml',
 )
 
+// 28) 存档 BOM 容错：用户的 process-lens.json 被编辑器加了 BOM 时不能整份回退默认
+check(
+  '读设置前会剥掉 BOM（否则 JSON.parse 抛错、设置全不生效）',
+  hostSrc.includes("readFileSync(settingsFile(), 'utf8')") && hostSrc.includes(".replace(/^\\uFEFF/, '')"),
+)
+check(
+  '读到带 BOM 的存档会顺手洗掉',
+  hostSrc.includes('raw.charCodeAt(0) === 0xfeff') && hostSrc.includes('saveSettingsSoon()'),
+)
+
 const failed = checks.filter((item) => !item.ok)
 console.log(`\n${checks.length - failed.length}/${checks.length} 通过`)
 if (failed.length) process.exitCode = 1
