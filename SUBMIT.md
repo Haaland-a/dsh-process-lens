@@ -93,4 +93,24 @@ package/LICENSE                    MIT
 - 工具步骤默认不找模型，本机写三行并挂「本机」小签；原来的「工具内容不外发」开关被它取代。
 - 修掉设置文件异步读取把刚拨开关盖回旧值的问题（改成同步读）。
 
-SHA256：`bf570a29b2c81944df0a344577028fedadca0560a282ee908140cc8175e5ac50`
+## 11. 怎么提交（照着点）
+
+第三方市场 **DSH Store**（`github.com/AI-Scarlett/DSH-Store`）走 issue 表单：
+
+https://github.com/AI-Scarlett/DSH-Store/issues/new?template=plugin-submission.yml&repository=https%3A%2F%2Fgithub.com%2FHaaland-a%2Fdsh-process-lens&plugin-path=.
+
+- **plugin path 填 `.`**，别留空：留空会被当成「自动发现」，多包仓库会撞 `SUBMISSION_PACKAGE_AMBIGUOUS`。本仓库是单插件根目录，填 `.` 最稳。
+- 仓库已经 **public**、默认分支 `main`、许可 MIT，市场能直接抓源码和 `main.tar.gz`。
+- 清单元数据已就位：`dsh.install` 指向 `main.tar.gz` / `main.zip` / git；`dsh.compatibility` 声明 `>=0.2.1-rc.1 <0.3.0`，其中 `0.2.2-rc.1` 标 `compatible`（只标真跑过的版本，其余按 unknown 走）。
+- 市场会只读 `package.json` + `cordis.patch.yml` 做静态检查。我们的 patch 只用了 `- insert:` 块式列表，没有内联序列（`[...]`）、没有 `!!js` 标签、没有 `disabled` 迁移条目——正好避开 `SUBMISSION_PATCH_AMBIGUOUS` 那类拒绝。
+- 以后想改走 npm：`npm publish`（包名 `dsh-process-lens` 若被占就加 scope），再把 `dsh.install.preferred` 改成 `npm`。
+
+## 12. 兼容声明
+
+| DSH 版本 | 状态 | 依据 |
+| --- | --- | --- |
+| 0.2.2-rc.1 | compatible | 本机桌面 profile 实跑：抽屉、过程页、讲解、队列、存储页、自测 141/141 |
+| 0.2.1-rc.x | unknown | 没有在同版本上跑过，不由范围命中推断 |
+| 0.3.x 及以后 | unknown | 宿主 API 可能变，出了再看 |
+
+SHA256：`3bfb6662483f9bd884e14bf4423ed7c38f8b82c2519ae6d3d32b6b4130d45540`

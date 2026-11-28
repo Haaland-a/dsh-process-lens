@@ -49,6 +49,25 @@
       "inject": [
         "@deepseek-ai/dsh-client-ui-conversation"
       ]
+    },
+    "install": {
+      "preferred": "tarball",
+      "tarball": "https://github.com/Haaland-a/dsh-process-lens/archive/refs/heads/main.tar.gz",
+      "zip": "https://github.com/Haaland-a/dsh-process-lens/archive/refs/heads/main.zip",
+      "git": "https://github.com/Haaland-a/dsh-process-lens.git"
+    },
+    "compatibility": {
+      "dsh": ">=0.2.1-rc.1 <0.3.0",
+      "profiles": [
+        "desktop",
+        "web"
+      ],
+      "dshReleases": {
+        "0.2.2-rc.1": "compatible"
+      }
     }
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
