@@ -1,7 +1,7 @@
 # 过程讲解器（dsh-process-lens）
 
 [![DSH plugin](https://img.shields.io/badge/DSH-plugin-4f7cff)](https://github.com/Haaland-a/dsh-process-lens)
-[![version](https://img.shields.io/badge/version-0.10.0-2ea043)](./package.json)
+[![version](https://img.shields.io/badge/version-0.10.1-2ea043)](./package.json)
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 [![self test](https://img.shields.io/badge/self--test-151%2F151-2ea043)](./harness.mjs)
 
@@ -467,7 +467,7 @@ glob=按名字找文件、web_search=上网搜、todo_write=列待办），省�
 
 蓝色底=建议开，灰色底=建议关。标签只是提示，不影响你点不点——开关的当前状态在开关自己身上，标签不会跟着变。
 
-### 4.19 v0.10.0：两个「省 token」终于分清了（新）
+### 4.19 v0.10.0：两个「省 token」终于分清了
 
 之前一直有个误会：设置里两行都像在「省 token」，但它们做的事完全不同——
 
@@ -482,6 +482,15 @@ glob=按名字找文件、web_search=上网搜、todo_write=列待办），省�
 - 提示词正文只带**这一批的那 N 步**（之前会拿「最近 N 步」，和批次范围不是一回事）；
 - 并进总结的那几步，卡片上直接写「已并进第 5 步的总结：改了几行代码」——不点开也知道讲了什么；
 - 行下面多一句大白话，写清「选 5 就是第 1~5 步发一次、第 6~10 步再发一次，不会每步都发」。
+
+### 4.20 v0.10.1：开关关了当场就停，输入框那条会写「生成中」（新）
+
+之前三个开关（打开时自动生成 / 开着时逐步生成 / 后台跑）都关掉了，看起来还在自己讲——因为「每 N 步合并讲一次」以前只要面板开着就走，压根不看这三个开关。0.10.1 改成：
+
+- **自动讲只有一个总闸**：面板开着，要开过「开着时逐步生成」或「打开时自动生成」才会自动讲；面板关着，要有「后台跑」。三个都关 = 一步都不自动发请求。
+- **取消勾选当场生效**：还在排队的自动任务直接撤掉，正在写的那一次也中断；卡片退回「待生成」，不算失败，想看再点。
+- **关面板也算没人看**：关掉面板 3 秒后（留出刷新、重连的缓冲）如果还没开「后台跑」，排队和正在写的都停。
+- **输入框下面那条会实时报状态**：正在写显示「生成中」（带跳动的小点），排队时显示「排队 2」，闲着就是「过程」。面板关着也照样报——它只查计数，不连流，所以不算「有人在看」，不会因此多花额度。
 
 ## 二、三个入口在哪儿
 
@@ -503,7 +512,7 @@ glob=按名字找文件、web_search=上网搜、todo_write=列待办），省�
 dsh plugin add link:E:/Personal/Desktop/dsh/dsh-process-lens --profile desktop
 ```
 
-装发行包：`npm pack` 会产出 `dsh-process-lens-0.10.0.tgz`，在「设置 → 插件 → 安装 bundle」里指向这个文件即可（和从市场安装走的是同一条路）。包里只带运行需要的东西：`index.js`、`client.js`、patch、两份语言包、详情页与功能图、图标、README、LICENSE；`harness.mjs` 不进包。
+装发行包：`npm pack` 会产出 `dsh-process-lens-0.10.1.tgz`，在「设置 → 插件 → 安装 bundle」里指向这个文件即可（和从市场安装走的是同一条路）。包里只带运行需要的东西：`index.js`、`client.js`、patch、两份语言包、详情页与功能图、图标、README、LICENSE；`harness.mjs` 不进包。
 
 要投稿到插件市场，材料在同目录 [SUBMIT.md](./SUBMIT.md)。
 

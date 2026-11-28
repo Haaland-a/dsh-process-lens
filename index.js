@@ -1163,6 +1163,8 @@ export function apply(ctx) {
       step,
       preset: redo ? String(preset ?? '') : '',
       priority: priority === true,
+      // 自动排上的（不是用户手动点的）：设置一关就能被撤掉
+      auto: manual !== true && redo !== true,
     }
     if (job.priority) queue.unshift(job)
     else queue.push(job)
@@ -1175,6 +1177,84 @@ export function apply(ctx) {
   }
 
   /**
+   * 现在允许自动讲吗？
+   * 面板开着 → 看「开着时逐步生成」「打开时自动生成」；
+   * 面板关着 → 只看「后台跑」。三个都关 = 一步都不自动发请求。
+   */
+  function autoAllowed() {
+    if (viewers > 0) return settings.liveExplain === true || settings.autoSummarize === true
+    return settings.batchBackground === true
+  }
+
+  /** 这个会话当前有几 step 正在调模型 */
+  function countWorking(sessionId) {
+    const prefix = String(sessionId) + ':'
+    let total = 0
+    for (const key of inflight.keys()) if (key.startsWith(prefix)) total += 1
+    return total
+  }
+
+  /** 这个会话还有几步在排队 */
+  function countPending(sessionId) {
+    return queue.filter((job) => job.sessionId === String(sessionId) && !inflight.has(job.key)).length
+  }
+
+  /** 撤掉一个任务：卡片退回「待生成」，批量就整批退回单步 */
+  function rollbackJob(job, record) {
+    const target = record?.steps.get(job.step)
+    const rollback = (entry) => {
+      if (!entry) return
+      entry.explain = 'idle'
+      entry.error = null
+      entry.draft = ''
+      entry.queuePos = 0
+      entry.batchTo = null
+      entry.batchSummary = null
+      entry.batchRange = null
+      pushCard(job.sessionId, job.turn, entry.step)
+    }
+    if (job.kind === 'batch' && record) {
+      // 这一批作废：挪回去的游标要退回来，后面再攒够 N 步还能重新合一次
+      record.batchedTo = Math.max(0, Number(job.from) - 1)
+      for (const entry of record.steps.values()) {
+        if (entry.step === job.step || entry.batchTo === job.step) rollback(entry)
+      }
+      return
+    }
+    rollback(target)
+  }
+
+  /** 开关一关就立刻生效：把自动排上、还没开跑的任务撤掉，别接着花额度 */
+  function dropAutoJobs(reason) {
+    let dropped = 0
+    for (let index = queue.length - 1; index >= 0; index -= 1) {
+      const job = queue[index]
+      if (job.auto !== true) continue
+      queue.splice(index, 1)
+      dropped += 1
+      rollbackJob(job, sessions.get(job.sessionId)?.turns.get(job.turn))
+    }
+    if (dropped > 0) log(`自动讲解已停（${reason}），撤掉 ${dropped} 个排队任务`)
+    return dropped
+  }
+
+  /** 正在写的那些也停手：取消勾选不是只撤排队，跑到一半的也不该继续烧额度 */
+  function cancelAutoJobs(reason) {
+    let cancelled = 0
+    for (const [, item] of jobAborts) {
+      const job = item?.job
+      if (!job || job.auto !== true) continue
+      job.cancelled = true
+      cancelled += 1
+      try {
+        item.controller?.abort?.()
+      } catch {}
+    }
+    if (cancelled > 0) log(`自动讲解已停（${reason}），中断 ${cancelled} 个正在写的`)
+    return cancelled
+  }
+
+  /**
    * 省 token++：每隔 N 步只调一次模型，一次把这 N 步一起总结。
    * 省下来的不是提示词长度，而是「调用次数」——10 步只花 2 次模型调用。
    * 返回 true 表示这一批已经排进队列。
@@ -1183,8 +1263,9 @@ export function apply(ctx) {
     if (replaying || disposed) return false
     const every = batchEveryOf()
     if (every < 2) return false
-    // 默认只在面板开着时跑：没人看就不花额度；开了「后台跑」才不管有没有人看
-    if (settings.batchBackground !== true && viewers === 0) return false
+    // 自动讲的总闸：面板开着要自己开过「开着时逐步生成 / 打开时自动生成」，
+    // 面板关着要有「后台跑」。三个都关 → 一步都不自动发请求。
+    if (!autoAllowed()) return false
     const record = sessions.get(String(sessionId))?.turns.get(turn)
     if (!record) return false
     const done = [...record.steps.values()]
@@ -1228,6 +1309,8 @@ export function apply(ctx) {
       kind: 'batch',
       from: list[0].step,
       to: target.step,
+      // 批次一定是自动排上的：设置一关就整批撤掉
+      auto: true,
     })
     void drain()
     return true
@@ -1352,6 +1435,11 @@ export function apply(ctx) {
       entry.error = null
       entry.explain = 'done'
     } catch (error) {
+      if (job.cancelled === true) {
+        // 用户把开关关了：不算失败，卡片退回「待生成」，想看再点
+        rollbackJob(job, record)
+        return
+      }
       if (job.preempted === true) {
         // 让位给优先任务：不算失败，回到队首等下一轮
         entry.explain = 'queued'
@@ -1744,6 +1832,11 @@ export function apply(ctx) {
         if (typeof body.allSteps === 'boolean') settings.allSteps = body.allSteps
         if (typeof body.skipTools === 'boolean') settings.skipTools = body.skipTools
         if (Number.isFinite(Number(body.maxTokens))) settings.maxTokens = Math.min(4000, Math.max(400, Number(body.maxTokens)))
+        // 关掉自动讲就立刻停手：还在排队、又不是你手动点的任务，直接撤掉
+        if (!autoAllowed()) {
+          dropAutoJobs('设置已关')
+          cancelAutoJobs('设置已关')
+        }
         saveSettingsSoon()
         writeJson(res, 200, { ok: true, settings: publicSettings() })
         return
@@ -1768,6 +1861,9 @@ export function apply(ctx) {
           session: sessionId,
           turn: last?.turn ?? null,
           status: last?.status ?? null,
+          // 输入框那条小开关要显示「生成中」：这里只报数，不算「有人在看」
+          working: countWorking(sessionId),
+          pending: countPending(sessionId),
         })
         return
       }
@@ -1980,6 +2076,16 @@ export function apply(ctx) {
       clearInterval(heartbeat)
       set.delete(client)
       viewers = Math.max(0, viewers - 1)
+      // 面板一关就等于「没人看」：没开「后台跑」就把排队的自动任务停掉
+      if (viewers === 0 && settings.batchBackground !== true) {
+        // 留 3 秒缓冲：页面刷新、断线重连都会短暂归零，别把排队任务当场清掉
+        const grace = setTimeout(() => {
+          if (disposed || viewers > 0 || settings.batchBackground === true) return
+          dropAutoJobs('面板已关')
+          cancelAutoJobs('面板已关')
+        }, 3000)
+        if (typeof grace?.unref === 'function') grace.unref()
+      }
       if (set.size === 0) subscribers.delete(key)
       try {
         res.end()

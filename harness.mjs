@@ -513,11 +513,12 @@ check(
   'maybeBatch + 合并标记',
 )
 check(
-  'Host：后台跑关着时没人看就不开工',
-  hostSrc.includes('settings.batchBackground !== true && viewers === 0') &&
+  'Host：自动讲有总闸，三个开关都关就一步不发',
+  hostSrc.includes('function autoAllowed()') &&
+    hostSrc.includes('if (!autoAllowed()) return false') &&
     hostSrc.includes('viewers += 1') &&
     hostSrc.includes('viewers = Math.max(0, viewers - 1)'),
-  'viewers 计数 + 闸门',
+  'autoAllowed + viewers 计数',
 )
 check(
   'Host：一轮结束时把剩下的顺手讲掉',
@@ -1026,6 +1027,146 @@ check(
     streamClientSrc.includes('不会每步都发') &&
     streamClientSrc.includes('精炼提示词') &&
     streamClientSrc.includes('调用次数不变'),
+)
+
+// 25) 自动讲的总闸：三个开关都关就一步都不发；关掉设置立刻撤掉排队任务
+const gatePrompts = []
+const gateWaits = []
+llmOverride = {
+  listProviders: () => [{ id: 'deepseek', name: 'DeepSeek' }],
+  listModels: async () => [{ provider: 'deepseek', id: 'chat', name: 'DeepSeek Chat' }],
+  resolveModelInfo: async () => ({ reasoning: { efforts: [{ id: 'low', name: '低' }] } }),
+  stream: async function* (options) {
+    llmCalls.push(options)
+    gatePrompts.push(options.messages?.[0]?.content?.[0]?.text ?? '')
+    yield { type: 'text-delta', text: '标题：这几步一起看\n在做什么：把步骤过一遍\n结果：没发现问题\n' }
+    await new Promise((resolve, reject) => {
+      gateWaits.push(resolve)
+      options.signal?.addEventListener?.('abort', () => reject(new Error('已取消')))
+    })
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  },
+}
+const gateStream = openStream('/process-lens/stream?session=' + SESSION_ID + '&turn=8')
+const pushPlainTurn = (turn, count) => {
+  pushEvent({ type: 'turn/start', time: 8000 + turn * 100, data: { turn } })
+  pushEvent({
+    type: 'user/message',
+    time: 8001 + turn * 100,
+    data: { role: 'user', content: [{ type: 'text', text: '把第 ' + turn + ' 轮过一遍' }] },
+  })
+  for (let index = 1; index <= count; index += 1) {
+    pushEvent({ type: 'step/start', time: 8010 + turn * 100 + index * 10, data: { turn, step: index } })
+    pushEvent({
+      type: 'assistant/message',
+      time: 8011 + turn * 100 + index * 10,
+      data: {
+        turn,
+        step: index,
+        message: { id: 'MSG-G' + turn + '-' + index, content: [{ type: 'text', text: '第 ' + index + ' 步结论' }] },
+        stream: [],
+      },
+    })
+    pushEvent({ type: 'step/end', time: 8019 + turn * 100 + index * 10, data: { turn, step: index } })
+  }
+  pushEvent({ type: 'turn/end', time: 8099 + turn * 100, data: { turn, reason: { kind: 'completed' } } })
+}
+const settle = async (rounds = 6) => {
+  for (let index = 0; index < rounds; index += 1) await new Promise((resolve) => setTimeout(resolve, 70))
+}
+
+// 25a) 三个自动开关全关：面板开着也不发请求
+await hit('/process-lens/api/config', 'POST', {
+  batchEvery: 2,
+  liveExplain: false,
+  autoSummarize: false,
+  batchBackground: false,
+  skipTools: false,
+  compact: false,
+})
+const gateBeforeA = gatePrompts.length
+pushPlainTurn(8, 3)
+await settle()
+const gateSnap8 = await hit('/process-lens/api/snapshot?session=' + SESSION_ID + '&turn=8')
+check('三个自动开关都关：一步都不发请求', gatePrompts.length === gateBeforeA, { added: gatePrompts.length - gateBeforeA })
+check(
+  '没生成就老实停在「待生成」',
+  byStep(gateSnap8.json, 1).explain === 'idle' && byStep(gateSnap8.json, 3).explain === 'idle',
+  [byStep(gateSnap8.json, 1).explain, byStep(gateSnap8.json, 3).explain],
+)
+
+// 25b) 只打开「开着时逐步生成」→ 每 2 步合并的那次请求立刻开跑
+await hit('/process-lens/api/config', 'POST', { liveExplain: true })
+const gateBeforeB = gatePrompts.length
+pushPlainTurn(9, 2)
+await settle(3)
+const liveLatest = await hit('/process-lens/api/latest?session=' + SESSION_ID)
+check(
+  '打开「开着时逐步生成」才发请求（每 2 步一次）',
+  gatePrompts.length === gateBeforeB + 1,
+  gatePrompts.length - gateBeforeB,
+)
+check('/latest 报出「正在写」的步数', Number(liveLatest.json.working) >= 1, liveLatest.json.working)
+
+// 25c) 槽位占满时新批次排队；一取消勾选立刻撤掉
+pushPlainTurn(10, 2)
+await settle(3)
+pushPlainTurn(11, 2)
+await settle(3)
+const beforeOff = await hit('/process-lens/api/latest?session=' + SESSION_ID)
+check('槽位占满时新批次在排队', Number(beforeOff.json.pending) >= 1, beforeOff.json.pending)
+await hit('/process-lens/api/config', 'POST', { liveExplain: false, autoSummarize: false })
+const afterOff = await hit('/process-lens/api/latest?session=' + SESSION_ID)
+check('一取消勾选，排队的自动任务立刻撤掉', Number(afterOff.json.pending) === 0, afterOff.json.pending)
+await settle(2)
+const stoppedLatest = await hit('/process-lens/api/latest?session=' + SESSION_ID)
+check('正在写的那两个也立刻停手', Number(stoppedLatest.json.working) === 0, stoppedLatest.json.working)
+const snap9 = await hit('/process-lens/api/snapshot?session=' + SESSION_ID + '&turn=9')
+check(
+  '被打断的不算失败，卡片退回待生成',
+  byStep(snap9.json, 1).explain === 'idle' && byStep(snap9.json, 1).explainError === null,
+  [byStep(snap9.json, 1).explain, byStep(snap9.json, 1).explainError],
+)
+const gateSnap11 = await hit('/process-lens/api/snapshot?session=' + SESSION_ID + '&turn=11')
+check(
+  '被撤掉的那几步回到「待生成」，不算失败',
+  byStep(gateSnap11.json, 1).explain === 'idle' && byStep(gateSnap11.json, 1).explainError === null,
+  [byStep(gateSnap11.json, 1).explain, byStep(gateSnap11.json, 1).explainError],
+)
+
+for (let round = 0; round < 8; round += 1) {
+  while (gateWaits.length) {
+    const release = gateWaits.shift()
+    try {
+      release()
+    } catch {}
+  }
+  await new Promise((resolve) => setTimeout(resolve, 70))
+}
+gateStream.close()
+llmOverride = null
+await hit('/process-lens/api/config', 'POST', {
+  batchEvery: 0,
+  liveExplain: false,
+  autoSummarize: false,
+  batchBackground: false,
+  skipTools: false,
+})
+
+const lensSrcGate = readFileSync(new URL('./index.js', import.meta.url), 'utf8')
+check(
+  'Host：关设置立刻撤掉排队任务',
+  lensSrcGate.includes('function dropAutoJobs') &&
+    lensSrcGate.includes("dropAutoJobs('设置已关')") &&
+    lensSrcGate.includes("dropAutoJobs('面板已关')"),
+  'dropAutoJobs 两个入口',
+)
+check(
+  '界面：输入框那条会显示「生成中」',
+  streamClientSrc.includes("'生成中'") &&
+    streamClientSrc.includes('setInterval(tick, 2000)') &&
+    streamClientSrc.includes('pl-dock-dot'),
+  '生成中 + 2 秒轮询',
 )
 
 const failed = checks.filter((item) => !item.ok)

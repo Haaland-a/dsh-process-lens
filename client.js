@@ -297,13 +297,17 @@ window.__ModuleLoader__.load({
       // 关键：seen 必须活在 ref 里。写在 effect 内部的话，用户一关面板 → open 变 false
       // → effect 重跑 → seen 归零 → 又把面板弹回来，表现就是「关不掉」。
       const seenRef = useRef(null)
+      // 输入框那条小开关：面板关着也要告诉你「正在生成」——只轮询计数，不连 SSE
+      const [busy, setBusy] = useState({ working: 0, pending: 0 })
       useEffect(() => {
-        if (!lens.config.autoOpen || !sessionId) return
+        if (!sessionId) return
         let stopped = false
         const tick = async () => {
           try {
             const data = await apiGet(`/latest?session=${encodeURIComponent(String(sessionId))}`)
             if (stopped) return
+            setBusy({ working: Number(data?.working) || 0, pending: Number(data?.pending) || 0 })
+            if (!lens.config.autoOpen) return
             const turn = typeof data?.turn === 'number' ? data.turn : null
             if (turn === null) return
             const first = seenRef.current === null
@@ -318,7 +322,7 @@ window.__ModuleLoader__.load({
           } catch {}
         }
         void tick()
-        const timer = setInterval(tick, 4000)
+        const timer = setInterval(tick, 2000)
         return () => {
           stopped = true
           clearInterval(timer)
@@ -332,12 +336,18 @@ window.__ModuleLoader__.load({
           'button',
           {
             type: 'button',
-            className: 'pl-dock-btn',
+            className: `pl-dock-btn${busy.working > 0 ? ' is-busy' : ''}`,
             onClick: () => void openLatest(sessionId),
-            title: '过程记录',
+            title:
+              busy.working > 0
+                ? `正在生成讲解：${busy.working} 步在写${busy.pending > 0 ? `，还有 ${busy.pending} 步排队` : ''}`
+                : busy.pending > 0
+                  ? `还有 ${busy.pending} 步排队等讲解`
+                  : '过程记录',
           },
           h(IconBulb, { size: 12 }),
-          h('span', null, '过程'),
+          busy.working > 0 ? h('span', { className: 'pl-dock-dot' }) : null,
+          h('span', null, busy.working > 0 ? '生成中' : busy.pending > 0 ? `排队 ${busy.pending}` : '过程'),
         ),
       )
     }
@@ -1038,6 +1048,11 @@ window.__ModuleLoader__.load({
             h('span', { className: 'pl-switch-text' }, lens.config.liveExplain ? '开' : '关'),
           ),
                   ),
+        h(
+          'p',
+          { className: 'pl-note' },
+          '这几个开关改完立刻生效：关掉后不再自动发请求，正在排队和正在写的也当场停手，卡片退回「待生成」。',
+        ),
         h(PromptStudio, { lens }),
       )
     }
@@ -2015,6 +2030,9 @@ window.__ModuleLoader__.load({
 .pl-dock { display: inline-flex; align-items: center; gap: 6px; }
 .pl-dock-btn { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: 11.5px; padding: 2px 8px; border-radius: 999px; border: 1px solid rgba(127,127,127,.3); background: transparent; color: inherit; opacity: .75; cursor: pointer; }
 .pl-dock-btn:hover { opacity: 1; }
+.pl-dock-btn.is-busy { opacity: 1; color: var(--dsw-alias-brand-primary, #4f7cff); border-color: currentColor; }
+.pl-dock-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: pl-dock-pulse 1s ease-in-out infinite; }
+@keyframes pl-dock-pulse { 0%, 100% { opacity: .3; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.05); } }
 .pl-dock-mode { display: none; }
 .pl-dot { width: 6px; height: 6px; border-radius: 50%; background: rgba(127,127,127,.7); }
 @media (prefers-color-scheme: dark) {
