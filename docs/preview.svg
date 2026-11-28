@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="300" viewBox="0 0 640 300" role="img">
+  <!-- 左边：一轮对话 -->
+  <rect x="32" y="96" width="150" height="72" rx="16" fill="none" stroke="#9aa4b2" stroke-width="1.8" opacity="0.85" />
+  <rect x="52" y="114" width="96" height="7" rx="3.5" fill="#4f7cff" opacity="0.35" />
+  <rect x="52" y="130" width="110" height="6" rx="3" fill="#9aa4b2" opacity="0.45" />
+  <rect x="52" y="144" width="74" height="6" rx="3" fill="#9aa4b2" opacity="0.45" />
+  <!-- 放大镜：这个名字的意思 -->
+  <circle cx="160" cy="188" r="17" fill="none" stroke="#4f7cff" stroke-width="2.4" />
+  <path d="M172 200 L184 212" stroke="#4f7cff" stroke-width="2.4" stroke-linecap="round" />
+  <!-- 指向抽屉 -->
+  <path d="M198 176 L228 176" stroke="#4f7cff" stroke-width="2.2" stroke-linecap="round" />
+  <path d="M221 171 L229 176 L221 181" fill="none" stroke="#4f7cff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
+
+  <!-- 右边：抽屉 -->
+  <rect x="240" y="40" width="368" height="220" rx="18" fill="none" stroke="#4f7cff" stroke-width="2.2" opacity="0.9" />
+  <rect x="258" y="56" width="68" height="16" rx="8" fill="#4f7cff" opacity="0.18" />
+  <rect x="336" y="58" width="42" height="12" rx="6" fill="#9aa4b2" opacity="0.3" />
+  <path d="M240 86 L608 86" stroke="#9aa4b2" stroke-width="1.2" opacity="0.4" />
+
+  <!-- 第 1 张卡 -->
+  <rect x="258" y="98" width="332" height="46" rx="10" fill="none" stroke="#9aa4b2" stroke-width="1.2" opacity="0.7" />
+  <circle cx="274" cy="112" r="4" fill="#4f7cff" opacity="0.75" />
+  <rect x="288" y="109" width="118" height="7" rx="3.5" fill="#4f7cff" opacity="0.4" />
+  <rect x="288" y="124" width="196" height="5" rx="2.5" fill="#9aa4b2" opacity="0.45" />
+  <rect x="288" y="133" width="140" height="5" rx="2.5" fill="#9aa4b2" opacity="0.45" />
+
+  <!-- 第 2 张卡：正在生成 -->
+  <rect x="258" y="152" width="332" height="46" rx="10" fill="none" stroke="#9aa4b2" stroke-width="1.2" opacity="0.7" />
+  <circle cx="274" cy="166" r="4" fill="#4f7cff" opacity="0.75" />
+  <rect x="288" y="163" width="96" height="7" rx="3.5" fill="#4f7cff" opacity="0.4" />
+  <path d="M288 178 L470 178" stroke="#9aa4b2" stroke-width="5" stroke-linecap="round" opacity="0.28" />
+  <path d="M288 178 L356 178" stroke="#4f7cff" stroke-width="5" stroke-linecap="round" opacity="0.55" />
+  <path d="M556 168 A 12 12 0 0 1 566 182" fill="none" stroke="#4f7cff" stroke-width="2.2" stroke-linecap="round" opacity="0.8" />
+
+  <!-- 第 3 张卡：只调用了工具，本地写的 -->
+  <rect x="258" y="206" width="332" height="46" rx="10" fill="none" stroke="#2f8a5b" stroke-width="1.4" opacity="0.75" />
+  <circle cx="274" cy="220" r="4" fill="#2f8a5b" opacity="0.85" />
+  <rect x="288" y="217" width="104" height="7" rx="3.5" fill="#2f8a5b" opacity="0.4" />
+  <rect x="288" y="232" width="164" height="5" rx="2.5" fill="#9aa4b2" opacity="0.45" />
+  <!-- 「本机」小签 -->
+  <rect x="512" y="212" width="62" height="18" rx="9" fill="#2f8a5b" opacity="0.16" />
+  <path d="M522 221 L526 225 L534 216" fill="none" stroke="#2f8a5b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  <rect x="540" y="218" width="24" height="6" rx="3" fill="#2f8a5b" opacity="0.55" />
+</svg>

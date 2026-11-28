@@ -475,9 +475,15 @@ glob=按名字找文件、web_search=上网搜、todo_write=列待办），省�
 
 ## 三、装 / 更新
 
+本地开发用链接装（改完立刻生效，不用重装）：
+
 ```bash
 dsh plugin add link:E:/Personal/Desktop/dsh/dsh-process-lens --profile desktop
 ```
+
+装发行包：`npm pack` 会产出 `dsh-process-lens-0.9.0.tgz`，在「设置 → 插件 → 安装 bundle」里指向这个文件即可（和从市场安装走的是同一条路）。包里只带运行需要的东西：`index.js`、`client.js`、patch、两份语言包、详情页与功能图、图标、README、LICENSE；`harness.mjs` 不进包。
+
+要投稿到插件市场，材料在同目录 [SUBMIT.md](./SUBMIT.md)。
 
 改完代码后：
 
