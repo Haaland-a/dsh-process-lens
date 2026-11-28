@@ -1368,6 +1368,31 @@ check(
 )
 check('插件图标是合法 svg', readFileSync(new URL('./icon.svg', import.meta.url), 'utf8').includes('<svg'))
 
+// 27) 发行文件卫生：BOM 会让加载器 JSON.parse 抛错、整条 bundle 被静默跳过
+const readBytes = (rel) => readFileSync(new URL(rel, import.meta.url))
+const noBom = (rel) => {
+  const buf = readBytes(rel)
+  return !(buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf)
+}
+check(
+  '发行文件不带 BOM（带 BOM 会让宿主解析 package.json 失败、插件整条不加载）',
+  noBom('./package.json') && noBom('./locale/zh.json') && noBom('./locale/en.json'),
+)
+check(
+  'bundle patch 指向的文件真实存在且插的是 process-lens',
+  (() => {
+    const pkg = JSON.parse(readText('./package.json'))
+    const rel = pkg.dsh?.bundle?.patch
+    if (!rel) return false
+    const text = readFileSync(new URL(rel.replace(/^\.\//, './'), import.meta.url), 'utf8')
+    return text.includes('- id: process-lens') && text.includes("name: 'dsh-process-lens'")
+  })(),
+)
+check(
+  'package.json 的 dsh.bundle.patch 写成 ./cordis.patch.yml',
+  JSON.parse(readText('./package.json')).dsh?.bundle?.patch === './cordis.patch.yml',
+)
+
 const failed = checks.filter((item) => !item.ok)
 console.log(`\n${checks.length - failed.length}/${checks.length} 通过`)
 if (failed.length) process.exitCode = 1

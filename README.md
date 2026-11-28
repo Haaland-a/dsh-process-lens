@@ -1,9 +1,9 @@
 # 过程讲解器（dsh-process-lens）
 
 [![DSH plugin](https://img.shields.io/badge/DSH-plugin-4f7cff)](https://github.com/Haaland-a/dsh-process-lens)
-[![version](https://img.shields.io/badge/version-0.10.2-2ea043)](./package.json)
+[![version](https://img.shields.io/badge/version-0.10.3-2ea043)](./package.json)
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
-[![self test](https://img.shields.io/badge/self--test-213%2F213-2ea043)](./harness.mjs)
+[![self test](https://img.shields.io/badge/self--test-216%2F216-2ea043)](./harness.mjs)
 
 把 AI 干活的每一步摊开给你看：**原文点一下就看全文**（不花额度），**人话解说按需生成**（点哪步才讲哪步），**用哪个模型讲由你单独挑**。
 
@@ -495,6 +495,17 @@ glob=按名字找文件、web_search=上网搜、todo_write=列待办），省�
 - **界面静态**：8 个开关文案、三个入口（回答下 / 输入框下 / 浮层）、两个页签、讲解模型选择、三种状态文案、「优先 / 重新生成」、「已并进第 N 步」都在；
 - **发行清单**：exports 指向的都是真文件、files 覆盖运行文件与文档、中英文语言包能解析、详情页与功能图、图标是合法 svg。
 
+### 4.22 v0.10.3：装上却不生效的真凶——package.json 带了 BOM（新）
+
+0.10.2 之前，插件能装、能 import、文件也都在，但界面上什么都没出现——宿主翻开插件时**整条跳过**了。原因很小也很硬：
+
+- **package.json 开头多了 3 个看不见的字节**（UTF-8 BOM，`EF BB BF`）。宿主读插件清单时是直接 `JSON.parse`，开头有 BOM 就抛 `Unexpected token`，于是这条 bundle 一个入口都插不进去，静默失败、不报错、也不写日志。
+- 表现就是：设置里能看到插件、依赖也链接对了、`/process-lens/api/...` 全是 404，而别的插件（`/dsh-market/...`）照常 200。
+- 修法：把 `package.json`、`locale/zh.json`、`locale/en.json` 的 BOM 去掉，三个文件都能正常 `JSON.parse`；发行包里也不再带 BOM。
+- **加了回归断言**（自测从 213 条到 216 条）：凡发行文件以 BOM 开头、或 `dsh.bundle.patch` 指的文件缺 `- id: process-lens`，自测直接红。
+
+> 自查一行：`head -c 3 package.json | od -An -tx1`，输出必须是 `7b 0a 20`（`{`），出现 `ef bb bf` 就是又带 BOM 了。改完这类文件要**完全退出 DSH 再打开**——插件树只在启动时合成一次，运行中不会重组。
+
 ### 4.20 v0.10.1：开关关了当场就停，输入框那条会写「生成中」（新）
 
 之前三个开关（打开时自动生成 / 开着时逐步生成 / 后台跑）都关掉了，看起来还在自己讲——因为「每 N 步合并讲一次」以前只要面板开着就走，压根不看这三个开关。0.10.1 改成：
@@ -524,7 +535,7 @@ glob=按名字找文件、web_search=上网搜、todo_write=列待办），省�
 dsh plugin add link:E:/Personal/Desktop/dsh/dsh-process-lens --profile desktop
 ```
 
-装发行包：`npm pack` 会产出 `dsh-process-lens-0.10.2.tgz`，在「设置 → 插件 → 安装 bundle」里指向这个文件即可（和从市场安装走的是同一条路）。包里只带运行需要的东西：`index.js`、`client.js`、patch、两份语言包、详情页与功能图、图标、README、LICENSE；`harness.mjs` 不进包。
+装发行包：`npm pack` 会产出 `dsh-process-lens-0.10.3.tgz`，在「设置 → 插件 → 安装 bundle」里指向这个文件即可（和从市场安装走的是同一条路）。包里只带运行需要的东西：`index.js`、`client.js`、patch、两份语言包、详情页与功能图、图标、README、LICENSE；`harness.mjs` 不进包。
 
 要投稿到插件市场，材料在同目录 [SUBMIT.md](./SUBMIT.md)。
 
