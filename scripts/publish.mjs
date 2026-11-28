@@ -15,7 +15,7 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
 const REPO = (pkg.repository?.url ?? pkg.repository ?? '').replace(/^git\+/, '').replace(/\.git$/, '').replace(/^https:\/\/github\.com\//, '')
 const VERSION = pkg.version
 const TAG = 'v' + VERSION
-const TOKEN = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? ''
+const TOKEN = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? process.env.GH_TOK ?? ''
 
 if (!REPO.includes('/')) throw new Error('package.json 的 repository 必须是 github 仓库')
 if (!TOKEN) throw new Error('先设 GH_TOKEN（需要 Contents: Read and write）')
