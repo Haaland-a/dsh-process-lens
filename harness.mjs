@@ -849,6 +849,14 @@ check(
   streamClientSrc.includes('查看占用') && streamClientSrc.includes("apiGet('/storage')"),
 )
 check(
+  '设置行尾的推荐标签还在',
+  (streamClientSrc.match(/h\(Rec, \{ text:/g) ?? []).length >= 9 &&
+    streamClientSrc.includes('推荐开') &&
+    streamClientSrc.includes('推荐关'),
+  (streamClientSrc.match(/h\(Rec, \{ text:/g) ?? []).length,
+)
+check('推荐标签有样式', streamClientSrc.includes('.pl-rec {') && streamClientSrc.includes('.pl-rec.is-off'))
+check(
   '清理按钮都在存储块里',
   streamClientSrc.includes("action: 'clear-memory'") &&
     streamClientSrc.includes("action: 'reset-settings'") &&

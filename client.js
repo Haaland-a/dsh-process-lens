@@ -421,7 +421,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'pl-row' },
-          h('span', { className: 'pl-key' }, '总结风格'),
+          h('span', { className: 'pl-key' }, '总结风格'), h(Rec, { text: '推荐 通俗' }),
           h(
             'select',
             {
@@ -451,7 +451,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'pl-row' },
-          h('span', { className: 'pl-key' }, '省 token（精炼）'),
+          h('span', { className: 'pl-key' }, '省 token（精炼）'), h(Rec, { text: '推荐开' }),
           h(
             'label',
             { className: 'pl-switch', title: '最近 N 步先在本机压缩再发送，不调用模型' },
@@ -493,7 +493,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'pl-row' },
-          h('span', { className: 'pl-key' }, '工具内容不外发'),
+          h('span', { className: 'pl-key' }, '工具内容不外发'), h(Rec, { text: '推荐关', off: true }),
           h(
             'label',
             { className: 'pl-switch', title: '只发工具名和成败，不发参数与返回' },
@@ -593,6 +593,11 @@ window.__ModuleLoader__.load({
         h(Storage, {}),
       )
     }
+    // ── 行尾的推荐标签：哪个建议开、哪个建议关 ──────────────────────────────────
+    function Rec({ text, off }) {
+      return h('span', { className: `pl-rec${off ? ' is-off' : ''}` }, String(text ?? ''))
+    }
+
     // ── 存储：设置文件 / 提示词存档 / 内存里的过程记录 ──────────────────────────
     function sizeText(bytes) {
       const value = Math.max(0, Number(bytes) || 0)
@@ -796,7 +801,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'pl-row' },
-          h('span', { className: 'pl-key' }, '讲解模型'),
+          h('span', { className: 'pl-key' }, '讲解模型'), h(Rec, { text: '推荐 跟随会话' }),
           h(
             'select',
             {
@@ -844,7 +849,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'pl-row' },
-          h('span', { className: 'pl-key' }, '思考'),
+          h('span', { className: 'pl-key' }, '思考'), h(Rec, { text: '推荐关', off: true }),
           h(
             'label',
             {
@@ -864,7 +869,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'pl-row' },
-          h('span', { className: 'pl-key' }, '自动弹出'),
+          h('span', { className: 'pl-key' }, '自动弹出'), h(Rec, { text: '推荐关', off: true }),
           h(
             'label',
             { className: 'pl-switch', title: '新一轮出现时自动打开面板' },
@@ -880,7 +885,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'pl-row' },
-          h('span', { className: 'pl-key' }, '打开时显示'),
+          h('span', { className: 'pl-key' }, '打开时显示'), h(Rec, { text: '推荐 8 步' }),
           h('input', {
             type: 'number',
             className: 'pl-num',
@@ -903,7 +908,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'pl-row' },
-          h('span', { className: 'pl-key' }, '省 token++'),
+          h('span', { className: 'pl-key' }, '省 token++'), h(Rec, { text: '推荐关', off: true }),
           h(
             'label',
             {
@@ -941,7 +946,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'pl-row' },
-          h('span', { className: 'pl-key' }, '后台跑'),
+          h('span', { className: 'pl-key' }, '后台跑'), h(Rec, { text: '推荐关', off: true }),
           h(
             'label',
             {
@@ -960,7 +965,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'pl-row' },
-          h('span', { className: 'pl-key' }, '打开时自动生成'),
+          h('span', { className: 'pl-key' }, '打开时自动生成'), h(Rec, { text: '推荐关', off: true }),
           h(
             'label',
             {
@@ -997,7 +1002,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'pl-row' },
-          h('span', { className: 'pl-key' }, '开着时逐步生成'),
+          h('span', { className: 'pl-key' }, '开着时逐步生成'), h(Rec, { text: '推荐关', off: true }),
           h(
             'label',
             {
@@ -1927,6 +1932,8 @@ window.__ModuleLoader__.load({
 .pl-chip { font-size: 10.5px; padding: 1px 7px; border-radius: 999px; background: rgba(127,127,127,.14); white-space: nowrap; }
 .pl-chip.is-error { background: rgba(214,69,69,.16); color: var(--dsw-alias-state-error-primary, #d64545); }
 .pl-note { margin-top: 6px; font-size: 11px; opacity: .6; font-style: italic; }
+.pl-rec { font-size: 10.5px; line-height: 1.5; padding: 0 5px; border-radius: 6px; white-space: nowrap; background: rgba(79,124,255,.14); color: var(--dsw-alias-brand-primary, #4f7cff); }
+.pl-rec.is-off { background: rgba(127,127,127,.15); color: inherit; opacity: .68; }
 .pl-live {
   margin-top: 7px;
   padding: 7px 9px;
