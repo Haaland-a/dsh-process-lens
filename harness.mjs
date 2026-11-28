@@ -150,8 +150,9 @@ check('失败的工具标成 error', tool2?.state === 'error', tool2)
 check('补账没有调用模型', llmCalls.length === 0, { calls: llmCalls.length })
 
 // 6) 设置读写
-const saved = await hit('/process-lens/api/config', 'POST', { provider: 'deepseek', model: 'chat', mode: 'eager', autoOpen: true })
-check('设置能存下', saved.json?.settings?.mode === 'eager' && saved.json?.settings?.autoOpen === true, saved.json?.settings)
+const saved = await hit('/process-lens/api/config', 'POST', { provider: 'deepseek', model: 'chat', autoOpen: true })
+check('设置能存下', saved.json?.settings?.autoOpen === true, saved.json?.settings)
+check('没有「讲解模式」这种幽灵开关', saved.json?.settings?.mode === undefined, Object.keys(saved.json?.settings ?? {}))
 
 // 7) 设置项都能存、都能读回
 await hit('/process-lens/api/config', 'POST', { provider: 'deepseek', model: 'chat', autoOpen: false })
@@ -1171,8 +1172,8 @@ check(
 
 // 26) 全量功能验收：设置项逐个往返（含越界夹取与非法值忽略）
 const configCases = [
-  [{ mode: 'onDemand' }, (s) => s.mode === 'onDemand', '讲解模式：按需'],
-  [{ mode: '乱传' }, (s) => s.mode === 'onDemand', '讲解模式：非法值忽略'],
+  [{ theme: 'light' }, (s) => s.theme === 'light', '外观：浅色'],
+  [{ theme: 'auto' }, (s) => s.theme === 'auto', '外观：跟着系统'],
   [{ autoOpen: true }, (s) => s.autoOpen === true, '自动弹出：开'],
   [{ autoOpen: false }, (s) => s.autoOpen === false, '自动弹出：关'],
   [{ batchEvery: 999 }, (s) => s.batchEvery === 50, '合并步数：上限 50'],
@@ -1401,6 +1402,210 @@ check(
 check(
   '读到带 BOM 的存档会顺手洗掉',
   hostSrc.includes('raw.charCodeAt(0) === 0xfeff') && hostSrc.includes('saveSettingsSoon()'),
+)
+
+// 29) 开关即时生效矩阵：每个开关都要「拨了就变」，不是等下一轮才生效
+await hit('/process-lens/api/config', 'POST', {
+  liveExplain: false,
+  autoSummarize: false,
+  batchBackground: false,
+  skipTools: false,
+  batchEvery: 0,
+  thinking: false,
+  compact: false,
+})
+const stalls = []
+const okLlm = {
+  listProviders: () => [{ id: 'deepseek', name: 'DeepSeek' }, { id: 'myapi', name: 'MyAPI' }],
+  listModels: async () => [
+    { provider: 'deepseek', id: 'chat', name: 'DeepSeek Chat' },
+    { provider: 'myapi', id: 'fast', name: 'Fast' },
+  ],
+  resolveModelInfo: async () => ({ reasoning: { efforts: [{ id: 'low', name: '低' }, { id: 'high', name: '高' }] } }),
+  stream: async function* (options) {
+    llmCalls.push(options)
+    yield { type: 'text-delta', text: '标题：一次就够\n在做什么：看了下文件\n结果：好了\n' }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  },
+}
+
+// 29.1 讲解模型：插件自己选的那个，拨完下一次生成就用它
+llmOverride = okLlm
+playTurn(41, 1)
+await hit('/process-lens/api/config', 'POST', { provider: 'myapi', model: 'fast' })
+await hit('/process-lens/api/explain', 'POST', { session: SESSION_ID, turn: 41, step: 1 })
+await settle(3)
+check(
+  '换讲解模型：下一次生成就用新选的（不跟会话模型）',
+  llmCalls.at(-1)?.provider === 'myapi' && llmCalls.at(-1)?.model === 'fast',
+  { 讲解用: String(llmCalls.at(-1)?.provider) + '/' + String(llmCalls.at(-1)?.model), 会话用: 'deepseek/chat' },
+)
+await hit('/process-lens/api/config', 'POST', { provider: 'deepseek', model: 'chat' })
+
+// 29.2 模型思考：拨上就当场加预算，拨下就复原
+await hit('/process-lens/api/config', 'POST', { thinking: true })
+playTurn(42, 1)
+await hit('/process-lens/api/explain', 'POST', { session: SESSION_ID, turn: 42, step: 1 })
+await settle(3)
+check('勾上「模型思考」：当场给够预算（>=2400）', Number(llmCalls.at(-1)?.maxTokens ?? 0) >= 2400, llmCalls.at(-1)?.maxTokens)
+await hit('/process-lens/api/config', 'POST', { thinking: false })
+playTurn(43, 1)
+await hit('/process-lens/api/explain', 'POST', { session: SESSION_ID, turn: 43, step: 1 })
+await settle(3)
+check('取消「模型思考」：预算当场回到默认', Number(llmCalls.at(-1)?.maxTokens ?? 0) < 2400, llmCalls.at(-1)?.maxTokens)
+
+// 29.3 精炼：勾上以后下一次提示词立刻变短，并明说省了多少（用「一步里翻了 12 次同样的日志」这种肥步骤来验）
+const pushFatTurn = (turn) => {
+  pushEvent({ type: 'turn/start', time: 12000 + turn * 100, data: { turn } })
+  pushEvent({
+    type: 'user/message',
+    time: 12001 + turn * 100,
+    data: { role: 'user', content: [{ type: 'text', text: '把这一轮日志全看一遍' }] },
+  })
+  pushEvent({ type: 'step/start', time: 12010 + turn * 100, data: { turn, step: 1 } })
+  pushEvent({
+    type: 'assistant/message',
+    time: 12011 + turn * 100,
+    data: { turn, step: 1, message: { id: 'MSG-FAT-' + turn, content: [{ type: 'text', text: '我把日志一条条看过了。'.repeat(220) }] }, stream: [] },
+  })
+  for (let index = 1; index <= 12; index += 1) {
+    pushEvent({
+      type: 'tool/call',
+      time: 12020 + turn * 100 + index,
+      data: { turn, step: 1, callId: 'fat' + turn + '-' + index, name: 'read', arguments: JSON.stringify({ file_path: 'E:/logs/same.log' }) },
+    })
+    pushEvent({
+      type: 'tool/result',
+      time: 12040 + turn * 100 + index,
+      data: {
+        turn,
+        step: 1,
+        message: { toolCallId: 'fat' + turn + '-' + index, content: [{ type: 'text', text: '日志内容很多行。'.repeat(40) }] },
+      },
+    })
+  }
+  pushEvent({ type: 'step/end', time: 12090 + turn * 100, data: { turn, step: 1 } })
+  pushEvent({ type: 'turn/end', time: 12099 + turn * 100, data: { turn, reason: { kind: 'completed' } } })
+}
+await hit('/process-lens/api/config', 'POST', { compact: false, compactCount: 10 })
+pushFatTurn(47)
+const promptFull = await hit('/process-lens/api/prompt?session=' + SESSION_ID)
+await hit('/process-lens/api/config', 'POST', { compact: true, compactCount: 10 })
+const promptShort = await hit('/process-lens/api/prompt?session=' + SESSION_ID)
+check(
+  '勾上「精炼」：下一次提示词立刻变短',
+  Number(promptShort.json?.chars) < Number(promptFull.json?.chars) * 0.8,
+  { 之前: promptFull.json?.chars, 之后: promptShort.json?.chars },
+)
+check(
+  '精炼会明说省了多少',
+  promptShort.json?.compactUsed === true && Number(promptShort.json?.fullChars) >= Number(promptShort.json?.chars),
+  { 现在: promptShort.json?.chars, 不精炼: promptShort.json?.fullChars },
+)
+await hit('/process-lens/api/config', 'POST', { compact: false })
+
+// 29.4 风格：换完下一次提示词就换口径
+await hit('/process-lens/api/config', 'POST', { style: 'pro' })
+const proPrompt = await hit('/process-lens/api/prompt?session=' + SESSION_ID)
+check('换风格：下一次提示词当场换口径', proPrompt.json?.styleName === '专业', proPrompt.json?.styleName)
+await hit('/process-lens/api/config', 'POST', { style: 'plain' })
+
+// 29.5 工具步骤不找模型：开着就一步都不花钱，卡片写「本机」
+await hit('/process-lens/api/config', 'POST', { skipTools: true })
+const beforeSkip = llmCalls.length
+playTurn(45, 2)
+await settle(2)
+const skipLocalSnap = await hit('/process-lens/api/snapshot?session=' + SESSION_ID + '&turn=45')
+check('工具步骤不找模型：开着就一次都不调', llmCalls.length === beforeSkip, { 调了: llmCalls.length - beforeSkip })
+check('工具步骤的卡片写成本机直说（不是失败）', byStep(skipLocalSnap.json, 1).explain === 'skipped', byStep(skipLocalSnap.json, 1).explain)
+
+// 29.6 反向：拨开那一瞬，已经排队和正在写的工具步也不许再花钱
+await hit('/process-lens/api/config', 'POST', { skipTools: false, batchBackground: true, batchEvery: 0 })
+llmOverride = {
+  listProviders: () => [{ id: 'deepseek', name: 'DeepSeek' }],
+  listModels: async () => [{ provider: 'deepseek', id: 'chat', name: 'DeepSeek Chat' }],
+  resolveModelInfo: async () => ({ reasoning: { efforts: [{ id: 'low', name: '低' }] } }),
+  stream: async function* (options) {
+    llmCalls.push(options)
+    await new Promise((resolve, reject) => {
+      stalls.push(resolve)
+      options.signal?.addEventListener?.('abort', () => reject(new Error('已取消')))
+    })
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  },
+}
+const callsBeforeRush = llmCalls.length
+playTurn(46, 4)
+pushEvent({ type: 'turn/end', time: 16900, data: { turn: 46, reason: { kind: 'completed' } } })
+await settle(5)
+const callsAfterRush = llmCalls.length
+check('工具步骤在开关关着时确实会调模型（对照组）', callsAfterRush > callsBeforeRush, { 调了: callsAfterRush - callsBeforeRush })
+await hit('/process-lens/api/config', 'POST', { skipTools: true })
+await settle(3)
+const afterFlip = await hit('/process-lens/api/latest?session=' + SESSION_ID)
+const flippedSnap = await hit('/process-lens/api/snapshot?session=' + SESSION_ID + '&turn=46')
+check(
+  '拨开「工具步骤不找模型」：排队里的当场撤掉，正在写的也停手',
+  Number(afterFlip.json?.pending) === 0 && Number(afterFlip.json?.working) === 0,
+  { 排队: afterFlip.json?.pending, 在写: afterFlip.json?.working },
+)
+const flippedStates = [1, 2].map((step) => byStep(flippedSnap.json, step).explain)
+check(
+  '被停掉的那几步改成本机直说，不标失败',
+  flippedStates.every((state) => state === 'skipped' || state === 'idle') &&
+    flippedSnap.json?.data?.steps?.every((item) => item.explain !== 'failed'),
+  flippedStates,
+)
+for (let round = 0; round < 6; round += 1) {
+  while (stalls.length) {
+    try {
+      stalls.shift()()
+    } catch {}
+  }
+  await new Promise((resolve) => setTimeout(resolve, 60))
+}
+llmOverride = null
+await hit('/process-lens/api/config', 'POST', {
+  skipTools: false,
+  batchBackground: false,
+  batchEvery: 0,
+  liveExplain: false,
+  autoSummarize: false,
+})
+
+// 29.7 只在界面生效的那几个：都是渲染时读设置，不用重启也不用重开面板
+const lensClientSrc = readText('client.js')
+check(
+  '「打开时显示几步」是渲染时读设置',
+  lensClientSrc.includes('config.recent') || lensClientSrc.includes('lens.config.recent'),
+  'client 里读 config.recent',
+)
+check(
+  '「看全部步骤」是渲染时读设置',
+  lensClientSrc.includes('config.allSteps') || lensClientSrc.includes('lens.config.allSteps'),
+  'client 里读 config.allSteps',
+)
+check(
+  '「外观」是渲染时读设置',
+  lensClientSrc.includes('config.theme') || lensClientSrc.includes('lens.config.theme'),
+  'client 里读 config.theme',
+)
+check(
+  '「打开时自动弹出」是渲染时读设置',
+  lensClientSrc.includes('config.autoOpen') || lensClientSrc.includes('lens.config.autoOpen'),
+  'client 里读 config.autoOpen',
+)
+
+// 29.8 源码层兜底：工具步拨开时的即时清理必须接线，不能只写在注释里
+check(
+  'POST /config 会调 applySkipToolsNow（拨开就清理）',
+  hostSrc.includes('wasSkipTools === false && settings.skipTools === true') && hostSrc.includes('applySkipToolsNow('),
+  'wasSkipTools → applySkipToolsNow',
+)
+check(
+  '被中断的工具步不会退回「待生成」',
+  hostSrc.includes('job.skippedLocal === true') && hostSrc.includes('skipToolStep(job.sessionId, job.turn, entry.step, entry)'),
+  'skippedLocal 分支',
 )
 
 const failed = checks.filter((item) => !item.ok)

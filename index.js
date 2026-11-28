@@ -6,9 +6,11 @@
  * 三个和参考插件不同的地方：
  *  1. 讲解模型可以单独选（settings.provider / settings.model），不跟随会话模型；
  *     没选时才回落到「会话模型 → 请求头 → 全局默认」。
- *  2. 是否立刻生成讲解由用户决定（settings.mode）：
- *       'onDemand'（默认）—— 没人打开抽屉就不调用模型，只记账；
- *       'eager'          —— 步骤一结束就在后台讲，打开即见成品。
+ *  2. 是否立刻生成讲解由用户决定，三个开关各管一段，且都当场生效：
+ *       「打开时自动讲最近 N 步」—— 一打开面板就补最近几步的概要；
+ *       「开着时逐步生成」      —— 面板开着时，每出现新的一步就讲；
+ *       「后台跑」              —— 面板关着也允许攒批讲。
+ *       三个都关 = 一步都不自动发请求（想细看再手动点）。
  *  3. 讲解文案走固定三行协议（标题 / 在做什么 / 结果），不给用户看术语。
  *
  * @module dsh-process-lens
@@ -42,8 +44,6 @@ const MAX_PARALLEL = 2
 const DEFAULTS = Object.freeze({
   provider: '',
   model: '',
-  /** 'onDemand' = 打开才讲；'eager' = 一结束就讲 */
-  mode: 'onDemand',
   /** 一轮回答结束后自动弹出抽屉 */
   autoOpen: false,
   maxTokens: 1600,
@@ -671,7 +671,6 @@ export function apply(ctx) {
     return {
       provider: settings.provider,
       model: settings.model,
-      mode: settings.mode,
       autoOpen: settings.autoOpen === true,
       maxTokens: settings.maxTokens,
       recent: settings.recent,
@@ -1209,6 +1208,11 @@ export function apply(ctx) {
     const target = record?.steps.get(job.step)
     const rollback = (entry) => {
       if (!entry) return
+      if (job.skippedLocal === true) {
+        // 开关拨到「工具步骤不找模型」：不是失败，也不是退回待生成，而是就地写成本机直说
+        skipToolStep(job.sessionId, job.turn, entry.step, entry)
+        return
+      }
       entry.explain = 'idle'
       entry.error = null
       entry.draft = ''
@@ -1257,6 +1261,59 @@ export function apply(ctx) {
     }
     if (cancelled > 0) log(`自动讲解已停（${reason}），中断 ${cancelled} 个正在写的`)
     return cancelled
+  }
+
+  /** 一个任务要覆盖的那几步里，是不是每一步都带工具 —— 只有这种才归「工具步骤」 */
+  function jobToolSteps(job) {
+    const record = sessions.get(job.sessionId)?.turns.get(job.turn)
+    const steps = []
+    if (job.kind === 'batch') {
+      const from = Number(job.from) || job.step
+      const to = Number(job.to) || job.step
+      for (let step = from; step <= to; step += 1) steps.push(step)
+    } else steps.push(job.step)
+    const entries = steps.map((step) => record?.steps.get(step)).filter(Boolean)
+    if (entries.length === 0) return { record, entries: [] }
+    if (!entries.every((entry) => entry.tools?.length > 0)) return { record, entries: [] }
+    return { record, entries }
+  }
+
+  /**
+   * 「工具步骤不找模型」由关拨到开时的即时生效：
+   * 排队中就撤掉并当场写成「本机直说」，正在写的直接掐掉 —— 不然拨完开关还会照旧烧一次额度。
+   */
+  function applySkipToolsNow(reason) {
+    let touched = 0
+    for (let index = queue.length - 1; index >= 0; index -= 1) {
+      const job = queue[index]
+      if (job.manual === true || job.force === true || job.auto !== true) continue
+      const { entries } = jobToolSteps(job)
+      if (entries.length === 0) continue
+      queue.splice(index, 1)
+      for (const entry of entries) {
+        if (entry.explain === 'done') continue
+        if (skipToolStep(job.sessionId, job.turn, entry.step, entry)) touched += 1
+      }
+    }
+    let cancelled = 0
+    for (const [, item] of jobAborts) {
+      const job = item?.job
+      if (!job || job.manual === true || job.force === true || job.auto !== true) continue
+      if (jobToolSteps(job).entries.length === 0) continue
+      job.skippedLocal = true
+      job.cancelled = true
+      cancelled += 1
+      try {
+        item.controller?.abort?.()
+      } catch {}
+      for (const entry of jobToolSteps(job).entries) {
+        if (entry.explain === 'done') continue
+        if (skipToolStep(job.sessionId, job.turn, entry.step, entry)) touched += 1
+      }
+    }
+    if (touched > 0 || cancelled > 0)
+      log(`工具步骤改成本机直说（${reason}）：跳过 ${touched} 步，中断 ${cancelled} 个正在写的`)
+    return touched
   }
 
   /**
@@ -1684,7 +1741,13 @@ export function apply(ctx) {
         entry.endedAt = event.time ?? Date.now()
         pushCard(sessionId, data.turn, data.step)
         // 批量开着时只走批量，避免每步单讲把额度又花一遍
-        if (batchEveryOf() < 2) enqueue(sessionId, data.turn, data.step, false)
+        // 批量关着（<2 步合并）时，逐步讲要看「自动讲」的闸门 —— 从前这里没看闸门，
+        // 结果「开着时逐步生成」「后台跑」在不合并的情况下等于没开。
+        if (batchEveryOf() < 2) {
+          // 工具步的「本机直说」不花钱、也不用等闸门；要模型的那些才看 autoAllowed
+          const localOnly = settings.skipTools !== false && entry.tools?.length > 0 && entry.explain !== 'done'
+          if (localOnly || autoAllowed()) enqueue(sessionId, data.turn, data.step, true)
+        }
         maybeBatch(sessionId, data.turn, data.step)
         return
       }
@@ -1699,7 +1762,8 @@ export function apply(ctx) {
             entry.status = 'done'
             entry.endedAt = entry.endedAt ?? Date.now()
           }
-          if (!batchOn) enqueue(sessionId, data.turn, entry.step, false)
+          const localOnly = settings.skipTools !== false && entry.tools?.length > 0 && entry.explain !== 'done'
+          if (!batchOn && (localOnly || autoAllowed())) enqueue(sessionId, data.turn, entry.step, true)
         }
         maybeBatch(sessionId, data.turn)
         pushTurn(sessionId, data.turn)
@@ -1814,9 +1878,9 @@ export function apply(ctx) {
       }
       if (route === '/config' && method === 'POST') {
         const body = await readBody(req)
+        const wasSkipTools = settings.skipTools !== false
         if (typeof body.provider === 'string') settings.provider = body.provider
         if (typeof body.model === 'string') settings.model = body.model
-        if (body.mode === 'eager' || body.mode === 'onDemand') settings.mode = body.mode
         if (typeof body.autoOpen === 'boolean') settings.autoOpen = body.autoOpen
         if (Number.isFinite(Number(body.recent))) settings.recent = Math.min(100, Math.max(0, Math.round(Number(body.recent))))
         if (typeof body.autoSummarize === 'boolean') settings.autoSummarize = body.autoSummarize
@@ -1836,6 +1900,8 @@ export function apply(ctx) {
         if (typeof body.thinking === 'boolean') settings.thinking = body.thinking
         if (typeof body.allSteps === 'boolean') settings.allSteps = body.allSteps
         if (typeof body.skipTools === 'boolean') settings.skipTools = body.skipTools
+        // 拨到「工具步骤不找模型」就立刻生效：已经排队的工具步当场改成本机直说，不再花一次钱
+        if (wasSkipTools === false && settings.skipTools === true) applySkipToolsNow('设置已改')
         if (Number.isFinite(Number(body.maxTokens))) settings.maxTokens = Math.min(4000, Math.max(400, Number(body.maxTokens)))
         // 关掉自动讲就立刻停手：还在排队、又不是你手动点的任务，直接撤掉
         if (!autoAllowed()) {

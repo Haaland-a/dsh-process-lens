@@ -32,7 +32,6 @@ window.__ModuleLoader__.load({
       config: {
         provider: '',
         model: '',
-        mode: 'onDemand',
         autoOpen: false,
         recent: 8,
         allSteps: false,
